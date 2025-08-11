@@ -60,13 +60,35 @@ func (r *PostgresAccountRepository) GetByAPIKey(ctx context.Context, apiKey stri
 }
 
 func (r *PostgresAccountRepository) UpdateBalance(ctx context.Context, id string, amount float64) error {
-	// atomically increment balance and update updated_at
-	const q = `
+	// Perform balance update inside a transaction and lock the row until commit
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	// Ensure rollback on any error before successful commit
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	// Lock the account row to avoid concurrent updates
+	const lockQ = `SELECT id FROM accounts WHERE id = $1 FOR UPDATE`
+	var lockedID string
+	if err := tx.QueryRowContext(ctx, lockQ, id).Scan(&lockedID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return domain.ErrAccountNotFound
+		}
+		return err
+	}
+
+	const updQ = `
 		UPDATE accounts
 		SET balance = balance + $1, updated_at = $2
 		WHERE id = $3
 	`
-	res, err := r.db.ExecContext(ctx, q, amount, time.Now().UTC(), id)
+	res, err := tx.ExecContext(ctx, updQ, amount, time.Now().UTC(), id)
 	if err != nil {
 		return err
 	}
@@ -77,6 +99,10 @@ func (r *PostgresAccountRepository) UpdateBalance(ctx context.Context, id string
 	if n == 0 {
 		return domain.ErrAccountNotFound
 	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	committed = true
 	return nil
 }
 

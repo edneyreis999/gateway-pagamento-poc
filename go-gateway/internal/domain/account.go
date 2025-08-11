@@ -2,6 +2,7 @@ package domain
 
 import (
 	"errors"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -23,6 +24,7 @@ type Account struct {
 	Balance   float64
 	CreatedAt time.Time
 	UpdatedAt time.Time
+	mu        sync.RWMutex
 }
 
 // NewAccount creates a new Account with generated IDs and timestamps.
@@ -48,6 +50,8 @@ func NewAccount(name, email string) (*Account, error) {
 
 // AddBalance increments the balance by a positive amount and updates UpdatedAt.
 func (a *Account) AddBalance(amount float64) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	if amount <= 0 {
 		return ErrNegativeValue
 	}
