@@ -1,0 +1,44 @@
+@startuml C3-Components-Domain
+!include <C4/C4_Component.puml>
+
+Person(user, "Client Developer")
+
+Container_Boundary(api_boundary, "REST API (net/http)") {
+  Component(account_handler, "AccountHandler", "Go", "Endpoints de criação e consulta de contas")
+  Component(invoice_handler, "InvoiceHandler", "Go", "Endpoints de criação e consulta de invoices")
+  Component(auth_middleware, "AuthMiddleware", "Go", "Autenticação por API Key e injeção de contexto da Account")
+}
+
+Container_Boundary(domain_boundary, "Domain Layer") {
+  Component(account_service, "AccountService", "Go", "Regra de criação de Account, busca e atualização de saldo")
+  Component(invoice_service, "InvoiceService", "Go", "Criação de Invoice, processamento e atualização de status")
+  Component(kafka_service, "KafkaService", "Go", "Publica PendingTransaction e consome TransactionResult")
+  Component(account_repo, "AccountRepository", "Go", "Persistência de Account")
+  Component(invoice_repo, "InvoiceRepository", "Go", "Persistência de Invoice")
+  Component(events_pending, "PendingTransaction Event", "struct", "Evento de nova transação a ser analisada")
+  Component(events_result, "TransactionResult Event", "struct", "Resultado do processamento antifraude")
+}
+
+Container(db, "PostgreSQL", "RDBMS")
+System_Ext(kafka, "Kafka", "Event Streaming")
+System_Ext(anti_fraud, "Anti-Fraud Service", "Processa transações")
+
+Rel(user, auth_middleware, "Envia API Key")
+Rel(auth_middleware, account_handler, "Encaminha requisição autenticada")
+Rel(auth_middleware, invoice_handler, "Encaminha requisição autenticada")
+Rel(account_handler, account_service, "Cria/Consulta Account")
+Rel(invoice_handler, invoice_service, "Cria/Consulta Invoice")
+Rel(account_service, account_repo, "Salvar/Buscar Account")
+Rel(invoice_service, invoice_repo, "Salvar/Buscar Invoice")
+Rel(invoice_service, kafka_service, "Solicita publicação PendingTransaction")
+Rel(kafka_service, kafka, "Publica/Consome eventos")
+Rel(kafka, kafka_service, "Entrega TransactionResult")
+Rel(kafka_service, invoice_service, "Atualiza status Invoice")
+Rel(kafka_service, account_service, "Atualiza saldo Account")
+Rel(account_repo, db, "SQL")
+Rel(invoice_repo, db, "SQL")
+Rel(kafka, anti_fraud, "PendingTransaction ->")
+Rel(anti_fraud, kafka, "<- TransactionResult")
+
+SHOW_LEGEND()
+@enduml

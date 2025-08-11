@@ -1,0 +1,24 @@
+@startuml C1-Context
+!include <C4/C4_Context.puml>
+
+AddElementTag("ExternalSystem", $bgColor="CornflowerBlue", $fontColor="white", $borderColor="CornflowerBlue")
+AddElementTag("User", $bgColor="#438dd5", $fontColor="white", $borderColor="#438dd5")
+
+Person(user, "Client Developer", "Desenvolvedor que consome a API para criar faturas e consultar contas")
+System_Boundary(go_gateway_boundary, "go-gateway Service") {
+  System(go_gateway, "go-gateway", "API para gerenciamento de contas e emissão/processamento de faturas (invoices)")
+}
+
+System_Ext(anti_fraud, "Anti-Fraud Service (NestJS)", "Processa eventos de fatura e retorna status de aprovação ou rejeição")
+System_Ext(kafka, "Kafka", "Barramento de eventos para processamento assíncrono de transações")
+System_Ext(db, "PostgreSQL", "Persistência de contas e faturas")
+
+Rel(user, go_gateway, "Cria contas, autentica via API Key, cria e consulta invoices")
+Rel(go_gateway, db, "CRUD contas/invoices", "SQL")
+Rel(go_gateway, kafka, "Publica PendingTransaction", "events")
+Rel(kafka, anti_fraud, "Entrega PendingTransaction", "consume")
+Rel(anti_fraud, kafka, "Publica TransactionResult", "events")
+Rel(kafka, go_gateway, "Entrega TransactionResult", "consume")
+
+SHOW_LEGEND()
+@enduml

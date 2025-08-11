@@ -1,0 +1,27 @@
+@startuml C2-Containers
+!include <C4/C4_Container.puml>
+
+Person(user, "Client Developer")
+
+System_Boundary(go_gateway_boundary, "go-gateway Service") {
+  Container(api, "REST API", "Go (net/http)", "Exposição dos endpoints de conta e invoices; autenticação por API Key")
+  Container(service_domain, "Domain Services", "Go", "Regras de negócio: criação de contas, criação e processamento de invoices")
+  Container(kafka_adapter, "Kafka Adapter", "Go", "Publica/consome eventos PendingTransaction e TransactionResult")
+  Container(db, "PostgreSQL", "RDBMS", "Armazena contas e invoices")
+}
+
+System_Ext(anti_fraud, "Anti-Fraud Service", "Node/NestJS")
+System_Ext(kafka, "Kafka Cluster", "Event Streaming")
+
+Rel(user, api, "HTTP requests (API Key)")
+Rel(api, service_domain, "Invoca métodos de domínio")
+Rel(service_domain, db, "CRUD contas/invoices", "SQL")
+Rel(service_domain, kafka_adapter, "Solicita publicação de eventos")
+Rel(kafka_adapter, kafka, "Publica / Consome eventos")
+Rel(kafka, anti_fraud, "Entrega PendingTransaction")
+Rel(anti_fraud, kafka, "Publica TransactionResult")
+Rel(kafka, kafka_adapter, "Entrega TransactionResult")
+Rel(kafka_adapter, service_domain, "Atualiza status da Invoice / saldo da Account")
+
+SHOW_LEGEND()
+@enduml

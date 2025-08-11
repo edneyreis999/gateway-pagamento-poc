@@ -2,13 +2,15 @@
 FROM openjdk:17-jdk-slim
 
 # Atualize os pacotes e instale Node.js
-RUN apt-get update && \
-    apt-get install -y curl gnupg && \
+RUN apt-get update && apt-get install -y \
+    graphviz \
+    libfreetype6 \
+    fontconfig \
+    fonts-dejavu \
+    curl gnupg git && \
     curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
     apt-get install -y nodejs=22.5.1-1nodesource1 && \
-    apt-get install -y git && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
+    apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Crie o usuário node e defina permissões
 RUN useradd -m -d /home/node -s /bin/bash node && \

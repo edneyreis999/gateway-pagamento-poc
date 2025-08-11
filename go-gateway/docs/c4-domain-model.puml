@@ -1,0 +1,73 @@
+@startuml C4-Domain-Model
+' Modelo de domínio detalhado (extensão, não parte oficial do C4 core)
+hide stereotype
+skinparam classAttributeIconSize 0
+skinparam wrapWidth 240
+skinparam maxMessageSize 200
+
+class Account {
+  +ID: string
+  +Name: string
+  +Email: string
+  +APIKey: string
+  +Balance: float64
+  +CreatedAt: time.Time
+  +UpdatedAt: time.Time
+  +AddBalance(amount float64)
+}
+
+class Invoice {
+  +ID: string
+  +AccountID: string
+  +Amount: float64
+  +Status: Status
+  +Description: string
+  +PaymentType: string
+  +CardLastDigits: string
+  +CreatedAt: time.Time
+  +UpdatedAt: time.Time
+  +Process() error
+  +UpdateStatus(newStatus Status) error
+}
+
+class CreditCard {
+  +Number: string
+  +CVV: string
+  +ExpiryMonth: int
+  +ExpiryYear: int
+  +CardholderName: string
+}
+
+enum Status {
+  pending
+  approved
+  rejected
+}
+
+class PendingTransaction <<event>> {
+  +AccountID: string
+  +InvoiceID: string
+  +Amount: float64
+}
+
+class TransactionResult <<event>> {
+  +InvoiceID: string
+  +Status: string
+  +ToDomainStatus(): Status
+}
+
+Account "1" -- "*" Invoice : owns >
+Invoice o-- CreditCard : uses (data at creation)
+Invoice "1" <-- "1" TransactionResult : updates status
+Invoice "1" --> "1" PendingTransaction : emitted
+
+note right of Invoice
+Processo:
+1. Criação -> Status=pending
+2. Emite PendingTransaction
+3. Anti-fraud retorna TransactionResult
+4. Status atualizado -> approved/rejected
+5. Account balance atualizado se aprovado
+end note
+
+@enduml
