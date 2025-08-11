@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"strings"
 
 	"github.com/devfullcycle/imersao22/go-gateway/internal/domain"
 	"github.com/devfullcycle/imersao22/go-gateway/internal/service"
@@ -15,7 +14,7 @@ import (
 // It matches methods in service.AccountService.
 type AccountServicePort interface {
 	Create(ctx context.Context, in service.AccountCreateInput) (*service.AccountOutput, error)
-	GetByID(ctx context.Context, id string) (*service.AccountOutput, error)
+	GetByAPIKey(ctx context.Context, apiKey string) (*service.AccountOutput, error)
 }
 
 // AccountHandler handles HTTP requests for accounts.
@@ -25,6 +24,16 @@ type AccountHandler struct {
 
 func NewAccountHandler(svc AccountServicePort) *AccountHandler {
 	return &AccountHandler{svc: svc}
+}
+
+// PostAccounts returns a handler for POST /accounts
+func (h *AccountHandler) PostAccounts() http.HandlerFunc {
+	return h.handleAccounts
+}
+
+// GetAccounts returns a handler for GET /accounts (via X-API-KEY)
+func (h *AccountHandler) GetAccounts() http.HandlerFunc {
+	return h.handleAccounts
 }
 
 // RegisterRoutes registers the HTTP handlers on a mux.
@@ -39,9 +48,25 @@ func (h *AccountHandler) handleAccounts(w http.ResponseWriter, r *http.Request) 
 	case http.MethodPost:
 		h.createAccount(w, r)
 	case http.MethodGet:
-		// listing not implemented yet
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "method not allowed"})
+		apiKey := r.Header.Get("X-API-KEY")
+		if apiKey == "" {
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "missing X-API-KEY header"})
+			return
+		}
+		out, err := h.svc.GetByAPIKey(r.Context(), apiKey)
+		if err != nil {
+			status := http.StatusInternalServerError
+			if errors.Is(err, domain.ErrAccountNotFound) {
+				status = http.StatusNotFound
+			}
+			w.WriteHeader(status)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(out)
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "method not allowed"})
@@ -55,13 +80,13 @@ func (h *AccountHandler) handleAccountByID(w http.ResponseWriter, r *http.Reques
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "method not allowed"})
 		return
 	}
-	id := strings.TrimPrefix(r.URL.Path, "/accounts/")
-	if id == "" || strings.Contains(id, "/") {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid id"})
+	apiKey := r.Header.Get("X-API-KEY")
+	if apiKey == "" {
+		w.WriteHeader(http.StatusUnauthorized)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "missing X-API-KEY header"})
 		return
 	}
-	out, err := h.svc.GetByID(r.Context(), id)
+	out, err := h.svc.GetByAPIKey(r.Context(), apiKey)
 	if err != nil {
 		status := http.StatusInternalServerError
 		if errors.Is(err, domain.ErrAccountNotFound) {

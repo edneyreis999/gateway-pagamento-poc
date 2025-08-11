@@ -15,15 +15,15 @@ import (
 )
 
 type fakeSvc struct {
-	create  func(ctx context.Context, in service.AccountCreateInput) (*service.AccountOutput, error)
-	getByID func(ctx context.Context, id string) (*service.AccountOutput, error)
+	create      func(ctx context.Context, in service.AccountCreateInput) (*service.AccountOutput, error)
+	getByAPIKey func(ctx context.Context, apiKey string) (*service.AccountOutput, error)
 }
 
 func (f *fakeSvc) Create(ctx context.Context, in service.AccountCreateInput) (*service.AccountOutput, error) {
 	return f.create(ctx, in)
 }
-func (f *fakeSvc) GetByID(ctx context.Context, id string) (*service.AccountOutput, error) {
-	return f.getByID(ctx, id)
+func (f *fakeSvc) GetByAPIKey(ctx context.Context, apiKey string) (*service.AccountOutput, error) {
+	return f.getByAPIKey(ctx, apiKey)
 }
 
 func TestAccountHandler_Create(t *testing.T) {
@@ -47,9 +47,9 @@ func TestAccountHandler_Create(t *testing.T) {
 	}
 }
 
-func TestAccountHandler_GetByID_NotFound(t *testing.T) {
+func TestAccountHandler_GetByAPIKey_NotFound(t *testing.T) {
 	svc := &fakeSvc{
-		getByID: func(ctx context.Context, id string) (*service.AccountOutput, error) {
+		getByAPIKey: func(ctx context.Context, apiKey string) (*service.AccountOutput, error) {
 			return nil, domain.ErrAccountNotFound
 		},
 	}
@@ -57,13 +57,30 @@ func TestAccountHandler_GetByID_NotFound(t *testing.T) {
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
 
-	req := httptest.NewRequest(http.MethodGet, "/accounts/does-not-exist", nil)
+	req := httptest.NewRequest(http.MethodGet, "/accounts/any", nil)
+	req.Header.Set("X-API-KEY", "nope")
 	rec := httptest.NewRecorder()
 
 	mux.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d", rec.Code)
+	}
+}
+
+func TestAccountHandler_GetByAPIKey_MissingHeader(t *testing.T) {
+	svc := &fakeSvc{}
+	h := NewAccountHandler(svc)
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/accounts/any", nil)
+	rec := httptest.NewRecorder()
+
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", rec.Code)
 	}
 }
 
