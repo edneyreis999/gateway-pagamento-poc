@@ -2,6 +2,7 @@ package domain
 
 import (
 	"errors"
+	"math/rand"
 	"sync"
 	"time"
 
@@ -77,12 +78,21 @@ func (i *Invoice) Process() error {
 		return errors.New("invoice: can only process pending invoices")
 	}
 
+	randomSource := rand.New(rand.NewSource(time.Now().Unix()))
+	var newStatus Status
+
+	if randomSource.Float64() <= 0.7 {
+		newStatus = StatusApproved
+	} else {
+		newStatus = StatusRejected
+	}
+
+	i.Status = newStatus
+
 	// In a real implementation, this would emit events
 	// For now, we just update the timestamp
 	i.UpdatedAt = time.Now().UTC()
 
-	// Change status to indicate processing has started
-	i.Status = StatusPending // Keep as pending since this is just the start of processing
 	return nil
 }
 
