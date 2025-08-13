@@ -1,0 +1,7 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+
+# Quando trabalhar com projetos na linguagem go, use sempre o diretório go-gateway

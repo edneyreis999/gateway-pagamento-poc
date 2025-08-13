@@ -15,15 +15,23 @@ func ConfigureRoutes(db *sql.DB) http.Handler {
 	r := chi.NewRouter()
 
 	// Services
-	svc := service.NewAccountService(db)
+	accountSvc := service.NewAccountService(db)
+	invoiceSvc := service.NewInvoiceService(db)
 
 	// Handlers
-	h := handlers.NewAccountHandler(svc)
+	accountH := handlers.NewAccountHandler(accountSvc)
+	invoiceH := handlers.NewInvoiceHandler(invoiceSvc)
 
 	// Routes
 	r.Route("/accounts", func(r chi.Router) {
-		r.Post("/", h.PostAccounts()) // POST /accounts
-		r.Get("/", h.GetAccounts())   // GET /accounts (by X-API-KEY)
+		r.Post("/", accountH.PostAccounts()) // POST /accounts
+		r.Get("/", accountH.GetAccounts())   // GET /accounts (by X-API-KEY)
+	})
+
+	r.Route("/invoices", func(r chi.Router) {
+		r.Post("/", invoiceH.PostInvoices())   // POST /invoices
+		r.Get("/", invoiceH.GetInvoices())     // GET /invoices (by account_id)
+		r.Get("/{id}", invoiceH.GetInvoices()) // GET /invoices/{id}
 	})
 
 	return r

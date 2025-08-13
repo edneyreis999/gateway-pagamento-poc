@@ -1,0 +1,138 @@
+### Test Invoice Endpoints
+
+### 1. Create an Account first (if needed)
+POST http://localhost:8080/accounts
+Content-Type: application/json
+
+{
+  "name": "Test Account for Invoices",
+  "email": "test-invoices@example.com"
+}
+
+### 2. Create an Invoice
+POST http://localhost:8080/invoices
+Content-Type: application/json
+
+{
+  "account_id": "{{account_id}}",
+  "amount": 100.50,
+  "description": "Test invoice for payment gateway",
+  "payment_type": "credit_card",
+  "card_last_digits": "1234"
+}
+
+### 3. Create another Invoice with different payment type
+POST http://localhost:8080/invoices
+Content-Type: application/json
+
+{
+  "account_id": "{{account_id}}",
+  "amount": 250.00,
+  "description": "Another test invoice",
+  "payment_type": "pix"
+}
+
+### 4. Get Invoices by Account ID
+GET http://localhost:8080/invoices?account_id={{account_id}}
+X-API-KEY: {{api_key}}
+
+### 5. Get Invoice by ID
+GET http://localhost:8080/invoices/{{invoice_id}}
+X-API-KEY: {{api_key}}
+
+### 6. Test invalid invoice creation (negative amount)
+POST http://localhost:8080/invoices
+Content-Type: application/json
+
+{
+  "account_id": "{{account_id}}",
+  "amount": -50.00,
+  "description": "Invalid invoice",
+  "payment_type": "credit_card"
+}
+
+### 7. Test invalid invoice creation (empty description)
+POST http://localhost:8080/invoices
+Content-Type: application/json
+
+{
+  "account_id": "{{account_id}}",
+  "amount": 100.00,
+  "description": "Te",
+  "payment_type": "credit_card"
+}
+
+### 8. Test invalid invoice creation (empty payment type)
+POST http://localhost:8080/invoices
+Content-Type: application/json
+
+{
+  "account_id": "{{account_id}}",
+  "amount": 100.00,
+  "description": "Test invoice",
+  "payment_type": ""
+}
+
+### 9. Test missing API key
+GET http://localhost:8080/invoices?account_id={{account_id}}
+
+### 10. Test method not allowed
+PUT http://localhost:8080/invoices
+X-API-KEY: {{api_key}}
+
+### 11. Test invalid account ID
+POST http://localhost:8080/invoices
+Content-Type: application/json
+
+{
+  "account_id": "",
+  "amount": 100.00,
+  "description": "Test invoice",
+  "payment_type": "credit_card"
+}
+
+### 12. Test different payment types
+POST http://localhost:8080/invoices
+Content-Type: application/json
+
+{
+  "account_id": "{{account_id}}",
+  "amount": 75.25,
+  "description": "Debit card payment",
+  "payment_type": "debit_card",
+  "card_last_digits": "5678"
+}
+
+### 13. Test PIX payment (no card digits)
+POST http://localhost:8080/invoices
+Content-Type: application/json
+
+{
+  "account_id": "{{account_id}}",
+  "amount": 300.00,
+  "description": "PIX payment test",
+  "payment_type": "pix"
+}
+
+### 14. Test large amount
+POST http://localhost:8080/invoices
+Content-Type: application/json
+
+{
+  "account_id": "{{account_id}}",
+  "amount": 9999.99,
+  "description": "Large amount test",
+  "payment_type": "credit_card",
+  "card_last_digits": "9999"
+}
+
+### 15. Test zero amount (should fail)
+POST http://localhost:8080/invoices
+Content-Type: application/json
+
+{
+  "account_id": "{{account_id}}",
+  "amount": 0.00,
+  "description": "Zero amount test",
+  "payment_type": "credit_card"
+}
