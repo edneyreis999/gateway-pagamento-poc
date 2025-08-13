@@ -8,9 +8,60 @@ import (
 	"github.com/devfullcycle/imersao22/go-gateway/internal/repository/memory"
 )
 
+// Mock AccountService for testing
+type mockAccountService struct {
+	accounts map[string]*AccountOutput
+}
+
+func newMockAccountService() *mockAccountService {
+	return &mockAccountService{
+		accounts: make(map[string]*AccountOutput),
+	}
+}
+
+func (m *mockAccountService) Create(ctx context.Context, in AccountCreateInput) (*AccountOutput, error) {
+	// Not needed for invoice tests
+	return nil, nil
+}
+
+func (m *mockAccountService) GetByID(ctx context.Context, id string) (*AccountOutput, error) {
+	// Not needed for invoice tests
+	return nil, nil
+}
+
+func (m *mockAccountService) GetByAPIKey(ctx context.Context, apiKey string) (*AccountOutput, error) {
+	if account, exists := m.accounts[apiKey]; exists {
+		return account, nil
+	}
+	return nil, domain.ErrAccountNotFound
+}
+
+func (m *mockAccountService) UpdateBalance(ctx context.Context, id string, amount float64) error {
+	// Not needed for invoice tests
+	return nil
+}
+
+func (m *mockAccountService) addTestAccount(apiKey, accountID string) {
+	m.accounts[apiKey] = &AccountOutput{
+		ID:      accountID,
+		Name:    "Test Account",
+		Email:   "test@example.com",
+		APIKey:  apiKey,
+		Balance: 1000.0,
+	}
+}
+
 func TestInvoiceService_Create(t *testing.T) {
 	repo := memory.NewInvoiceRepositoryMemory()
-	svc := &InvoiceService{repo: repo}
+	mockAccountSvc := newMockAccountService()
+
+	// Add a test account
+	testAPIKey := "test-api-key-123"
+	testAccountID := "test-account-id"
+	mockAccountSvc.addTestAccount(testAPIKey, testAccountID)
+
+	svc := NewInvoiceServiceWithAccountService(nil, mockAccountSvc)
+	svc.repo = repo // Override the repo to use memory instead of postgres
 
 	tests := []struct {
 		name          string
@@ -20,7 +71,8 @@ func TestInvoiceService_Create(t *testing.T) {
 		{
 			name: "valid invoice",
 			input: InvoiceCreateInput{
-				AccountID:      "test-account-id",
+				APIKey:         testAPIKey,
+				AccountID:      testAccountID,
 				Amount:         100.50,
 				Description:    "Test invoice",
 				PaymentType:    "credit_card",
@@ -31,7 +83,8 @@ func TestInvoiceService_Create(t *testing.T) {
 		{
 			name: "invalid description too short",
 			input: InvoiceCreateInput{
-				AccountID:   "test-account-id",
+				APIKey:      testAPIKey,
+				AccountID:   testAccountID,
 				Amount:      100.50,
 				Description: "Te",
 				PaymentType: "credit_card",
@@ -41,7 +94,8 @@ func TestInvoiceService_Create(t *testing.T) {
 		{
 			name: "invalid payment type empty",
 			input: InvoiceCreateInput{
-				AccountID:   "test-account-id",
+				APIKey:      testAPIKey,
+				AccountID:   testAccountID,
 				Amount:      100.50,
 				Description: "Test invoice",
 				PaymentType: "",
@@ -51,7 +105,8 @@ func TestInvoiceService_Create(t *testing.T) {
 		{
 			name: "invalid amount negative",
 			input: InvoiceCreateInput{
-				AccountID:   "test-account-id",
+				APIKey:      testAPIKey,
+				AccountID:   testAccountID,
 				Amount:      -50.00,
 				Description: "Test invoice",
 				PaymentType: "credit_card",
@@ -61,8 +116,20 @@ func TestInvoiceService_Create(t *testing.T) {
 		{
 			name: "invalid amount zero",
 			input: InvoiceCreateInput{
-				AccountID:   "test-account-id",
+				APIKey:      testAPIKey,
+				AccountID:   testAccountID,
 				Amount:      0.00,
+				Description: "Test invoice",
+				PaymentType: "credit_card",
+			},
+			expectedError: true,
+		},
+		{
+			name: "invalid API key",
+			input: InvoiceCreateInput{
+				APIKey:      "invalid-api-key",
+				AccountID:   testAccountID,
+				Amount:      100.50,
 				Description: "Test invoice",
 				PaymentType: "credit_card",
 			},
@@ -89,8 +156,8 @@ func TestInvoiceService_Create(t *testing.T) {
 			if output.ID == "" {
 				t.Error("expected invoice ID to be set")
 			}
-			if output.AccountID != tt.input.AccountID {
-				t.Errorf("expected account ID %s, got %s", tt.input.AccountID, output.AccountID)
+			if output.AccountID != testAccountID {
+				t.Errorf("expected account ID %s, got %s", testAccountID, output.AccountID)
 			}
 			if output.Amount != tt.input.Amount {
 				t.Errorf("expected amount %f, got %f", tt.input.Amount, output.Amount)
@@ -113,11 +180,20 @@ func TestInvoiceService_Create(t *testing.T) {
 
 func TestInvoiceService_GetByID(t *testing.T) {
 	repo := memory.NewInvoiceRepositoryMemory()
-	svc := &InvoiceService{repo: repo}
+	mockAccountSvc := newMockAccountService()
+
+	// Add a test account
+	testAPIKey := "test-api-key-123"
+	testAccountID := "test-account-id"
+	mockAccountSvc.addTestAccount(testAPIKey, testAccountID)
+
+	svc := NewInvoiceServiceWithAccountService(nil, mockAccountSvc)
+	svc.repo = repo // Override the repo to use memory instead of postgres
 
 	// Create a test invoice first
 	input := InvoiceCreateInput{
-		AccountID:      "test-account-id",
+		APIKey:         testAPIKey,
+		AccountID:      testAccountID,
 		Amount:         100.50,
 		Description:    "Test invoice",
 		PaymentType:    "credit_card",
@@ -148,24 +224,38 @@ func TestInvoiceService_GetByID(t *testing.T) {
 
 func TestInvoiceService_GetByAccountID(t *testing.T) {
 	repo := memory.NewInvoiceRepositoryMemory()
-	svc := &InvoiceService{repo: repo}
+	mockAccountSvc := newMockAccountService()
+
+	// Add test accounts
+	testAPIKey1 := "test-api-key-1"
+	testAPIKey2 := "test-api-key-2"
+	testAccountID1 := "account-1"
+	testAccountID2 := "account-2"
+	mockAccountSvc.addTestAccount(testAPIKey1, testAccountID1)
+	mockAccountSvc.addTestAccount(testAPIKey2, testAccountID2)
+
+	svc := NewInvoiceServiceWithAccountService(nil, mockAccountSvc)
+	svc.repo = repo // Override the repo to use memory instead of postgres
 
 	// Create test invoices for different accounts
 	inputs := []InvoiceCreateInput{
 		{
-			AccountID:   "account-1",
+			APIKey:      testAPIKey1,
+			AccountID:   testAccountID1,
 			Amount:      100.00,
 			Description: "Invoice 1",
 			PaymentType: "credit_card",
 		},
 		{
-			AccountID:   "account-1",
+			APIKey:      testAPIKey1,
+			AccountID:   testAccountID1,
 			Amount:      200.00,
 			Description: "Invoice 2",
 			PaymentType: "debit_card",
 		},
 		{
-			AccountID:   "account-2",
+			APIKey:      testAPIKey2,
+			AccountID:   testAccountID2,
 			Amount:      150.00,
 			Description: "Invoice 3",
 			PaymentType: "credit_card",
@@ -212,11 +302,20 @@ func TestInvoiceService_GetByAccountID(t *testing.T) {
 
 func TestInvoiceService_UpdateStatus(t *testing.T) {
 	repo := memory.NewInvoiceRepositoryMemory()
-	svc := &InvoiceService{repo: repo}
+	mockAccountSvc := newMockAccountService()
+
+	// Add a test account
+	testAPIKey := "test-api-key-123"
+	testAccountID := "test-account-id"
+	mockAccountSvc.addTestAccount(testAPIKey, testAccountID)
+
+	svc := NewInvoiceServiceWithAccountService(nil, mockAccountSvc)
+	svc.repo = repo // Override the repo to use memory instead of postgres
 
 	// Create a test invoice first
 	input := InvoiceCreateInput{
-		AccountID:      "test-account-id",
+		APIKey:         testAPIKey,
+		AccountID:      testAccountID,
 		Amount:         100.50,
 		Description:    "Test invoice",
 		PaymentType:    "credit_card",

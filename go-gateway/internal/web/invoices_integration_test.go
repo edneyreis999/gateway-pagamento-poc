@@ -40,11 +40,19 @@ func TestInvoice_CreateAndGet_Success(t *testing.T) {
 	}
 
 	// Now create an invoice
+	// First mock the GetByAPIKey call that InvoiceService makes
+	now := time.Now().UTC()
+	accountRows := sqlmock.NewRows([]string{"id", "name", "email", "api_key", "balance", "created_at", "updated_at"}).
+		AddRow(accountID, "John Doe", "john@example.com", apiKey, 0.0, now, now)
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, name, email, api_key, balance, created_at, updated_at FROM accounts WHERE api_key = $1")).
+		WithArgs(apiKey).WillReturnRows(accountRows)
+
+	// Then mock the invoice creation
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO invoices (id, account_id, amount, status, description, payment_type, card_last_digits, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)")).
 		WithArgs(sqlmock.AnyArg(), accountID, 100.50, "pending", "Test invoice", "credit_card", "1234", sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
-	invoiceBody := bytes.NewBufferString(`{"account_id":"` + accountID + `","amount":100.50,"description":"Test invoice","payment_type":"credit_card","card_last_digits":"1234"}`)
+	invoiceBody := bytes.NewBufferString(`{"api_key":"` + apiKey + `","account_id":"` + accountID + `","amount":100.50,"description":"Test invoice","payment_type":"credit_card","card_last_digits":"1234"}`)
 	invoiceResp, err := http.Post(ts.URL+"/invoices", "application/json", invoiceBody)
 	if err != nil {
 		t.Fatalf("create invoice: %v", err)
@@ -61,7 +69,7 @@ func TestInvoice_CreateAndGet_Success(t *testing.T) {
 	}
 
 	// Now get the invoice by ID
-	now := time.Now().UTC()
+	now = time.Now().UTC()
 	rows := sqlmock.NewRows([]string{"id", "account_id", "amount", "status", "description", "payment_type", "card_last_digits", "created_at", "updated_at"}).
 		AddRow(invoiceID, accountID, 100.50, "pending", "Test invoice", "credit_card", "1234", now, now)
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, account_id, amount, status, description, payment_type, card_last_digits, created_at, updated_at FROM invoices WHERE id = $1")).
@@ -106,7 +114,14 @@ func TestInvoice_Create_InvalidAmount(t *testing.T) {
 	defer ts.Close()
 	defer db.Close()
 
-	resp, err := http.Post(ts.URL+"/invoices", "application/json", bytes.NewBufferString(`{"account_id":"test-id","amount":-50.00,"description":"Test invoice","payment_type":"credit_card"}`))
+	// Mock the GetByAPIKey call that InvoiceService makes
+	now := time.Now().UTC()
+	accountRows := sqlmock.NewRows([]string{"id", "name", "email", "api_key", "balance", "created_at", "updated_at"}).
+		AddRow("test-id", "Test Account", "test@example.com", "test-api-key", 0.0, now, now)
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, name, email, api_key, balance, created_at, updated_at FROM accounts WHERE api_key = $1")).
+		WithArgs("test-api-key").WillReturnRows(accountRows)
+
+	resp, err := http.Post(ts.URL+"/invoices", "application/json", bytes.NewBufferString(`{"api_key":"test-api-key","account_id":"test-id","amount":-50.00,"description":"Test invoice","payment_type":"credit_card"}`))
 	if err != nil {
 		t.Fatalf("post: %v", err)
 	}
@@ -124,7 +139,14 @@ func TestInvoice_Create_InvalidDescription(t *testing.T) {
 	defer ts.Close()
 	defer db.Close()
 
-	resp, err := http.Post(ts.URL+"/invoices", "application/json", bytes.NewBufferString(`{"account_id":"test-id","amount":100.00,"description":"Te","payment_type":"credit_card"}`))
+	// Mock the GetByAPIKey call that InvoiceService makes
+	now := time.Now().UTC()
+	accountRows := sqlmock.NewRows([]string{"id", "name", "email", "api_key", "balance", "created_at", "updated_at"}).
+		AddRow("test-id", "Test Account", "test@example.com", "test-api-key", 0.0, now, now)
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, name, email, api_key, balance, created_at, updated_at FROM accounts WHERE api_key = $1")).
+		WithArgs("test-api-key").WillReturnRows(accountRows)
+
+	resp, err := http.Post(ts.URL+"/invoices", "application/json", bytes.NewBufferString(`{"api_key":"test-api-key","account_id":"test-id","amount":100.00,"description":"Te","payment_type":"credit_card"}`))
 	if err != nil {
 		t.Fatalf("post: %v", err)
 	}

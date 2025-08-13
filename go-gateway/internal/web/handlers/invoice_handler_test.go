@@ -80,6 +80,7 @@ func TestInvoiceHandler_CreateInvoice(t *testing.T) {
 		{
 			name: "valid invoice creation",
 			input: service.InvoiceCreateInput{
+				APIKey:         "test-api-key-123",
 				AccountID:      "test-account-id",
 				Amount:         100.50,
 				Description:    "Test invoice",
@@ -92,6 +93,7 @@ func TestInvoiceHandler_CreateInvoice(t *testing.T) {
 		{
 			name: "invalid amount",
 			input: service.InvoiceCreateInput{
+				APIKey:      "test-api-key-123",
 				AccountID:   "test-account-id",
 				Amount:      -50.00,
 				Description: "Test invoice",
@@ -103,6 +105,7 @@ func TestInvoiceHandler_CreateInvoice(t *testing.T) {
 		{
 			name: "invalid description",
 			input: service.InvoiceCreateInput{
+				APIKey:      "test-api-key-123",
 				AccountID:   "test-account-id",
 				Amount:      100.00,
 				Description: "Te",

@@ -29,6 +29,7 @@ type AddBalanceInput struct {
 
 // InvoiceCreateInput is the input DTO to create an invoice.
 type InvoiceCreateInput struct {
+	APIKey         string  `json:"api_key"`
 	AccountID      string  `json:"account_id"`
 	Amount         float64 `json:"amount"`
 	Description    string  `json:"description"`

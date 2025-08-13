@@ -8,19 +8,41 @@ import (
 	pg "github.com/devfullcycle/imersao22/go-gateway/internal/repository/postgres"
 )
 
+// AccountServicePort defines the interface for AccountService methods needed by InvoiceService
+type AccountServicePort interface {
+	GetByAPIKey(ctx context.Context, apiKey string) (*AccountOutput, error)
+}
+
 // InvoiceService implements domain.InvoiceRepository by delegating to a Postgres repository
 // and also provides DTO-based methods for the API/handlers layer.
 type InvoiceService struct {
-	repo domain.InvoiceRepository
+	repo           domain.InvoiceRepository
+	accountService AccountServicePort
 }
 
 func NewInvoiceService(db *sql.DB) *InvoiceService {
-	return &InvoiceService{repo: pg.NewPostgresInvoiceRepository(db)}
+	return &InvoiceService{
+		repo:           pg.NewPostgresInvoiceRepository(db),
+		accountService: NewAccountService(db),
+	}
+}
+
+// NewInvoiceServiceWithAccountService creates a new InvoiceService with a custom AccountService
+func NewInvoiceServiceWithAccountService(db *sql.DB, accountService AccountServicePort) *InvoiceService {
+	return &InvoiceService{
+		repo:           pg.NewPostgresInvoiceRepository(db),
+		accountService: accountService,
+	}
 }
 
 // Create creates a new invoice from input DTO and returns an output DTO.
 func (s *InvoiceService) Create(ctx context.Context, in InvoiceCreateInput) (*InvoiceOutput, error) {
-	invoice, err := domain.NewInvoice(in.AccountID, in.Description, in.PaymentType, in.Amount, in.CardLastDigits)
+	accountOutput, err := s.accountService.GetByAPIKey(ctx, in.APIKey)
+	if err != nil {
+		return nil, err
+	}
+
+	invoice, err := domain.NewInvoice(accountOutput.ID, in.Description, in.PaymentType, in.Amount, in.CardLastDigits)
 	if err != nil {
 		return nil, err
 	}
