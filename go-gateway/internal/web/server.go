@@ -29,9 +29,9 @@ func ConfigureRoutes(db *sql.DB) http.Handler {
 	})
 
 	r.Route("/invoices", func(r chi.Router) {
-		r.Post("/", invoiceH.PostInvoices())   // POST /invoices
-		r.Get("/", invoiceH.GetInvoices())     // GET /invoices (by account_id)
-		r.Get("/{id}", invoiceH.GetInvoices()) // GET /invoices/{id}
+		r.Post("/", invoiceH.PostInvoices())      // POST /invoices
+		r.Get("/", invoiceH.GetInvoices())        // GET /invoices (by account_id)
+		r.Get("/{id}", invoiceH.GetInvoiceByID()) // GET /invoices/{id}
 	})
 
 	return r

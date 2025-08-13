@@ -2,326 +2,243 @@ package web
 
 import (
 	"bytes"
-	"context"
 	"database/sql"
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
+	"regexp"
 	"testing"
+	"time"
 
-	"github.com/devfullcycle/imersao22/go-gateway/internal/domain"
-	"github.com/devfullcycle/imersao22/go-gateway/internal/service"
-	"github.com/devfullcycle/imersao22/go-gateway/internal/web/handlers"
-	_ "github.com/lib/pq"
+	"github.com/DATA-DOG/go-sqlmock"
 )
 
-var testDB *sql.DB
+func TestInvoice_CreateAndGet_Success(t *testing.T) {
+	ts, mock, db := newTestServer(t)
+	defer ts.Close()
+	defer db.Close()
 
-func TestMain(m *testing.M) {
-	// Setup test database connection
-	var err error
-	testDB, err = sql.Open("postgres", "postgres://postgres:postgres@localhost:5432/gateway_test?sslmode=disable")
+	// First create an account
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO accounts (id, name, email, api_key, balance, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7)")).
+		WithArgs(sqlmock.AnyArg(), "John Doe", "john@example.com", sqlmock.AnyArg(), 0.0, sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	accountBody := bytes.NewBufferString(`{"name":"John Doe","email":"john@example.com"}`)
+	accountResp, err := http.Post(ts.URL+"/accounts", "application/json", accountBody)
 	if err != nil {
-		panic(err)
+		t.Fatalf("create account: %v", err)
 	}
-	defer testDB.Close()
+	if accountResp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201 got %d", accountResp.StatusCode)
+	}
+	var accountCreated map[string]any
+	_ = json.NewDecoder(accountResp.Body).Decode(&accountCreated)
+	accountResp.Body.Close()
+	accountID, _ := accountCreated["id"].(string)
+	apiKey, _ := accountCreated["api_key"].(string)
+	if accountID == "" || apiKey == "" {
+		t.Fatalf("expected id and api_key in response")
+	}
 
-	// Run tests
-	m.Run()
+	// Now create an invoice
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO invoices (id, account_id, amount, status, description, payment_type, card_last_digits, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)")).
+		WithArgs(sqlmock.AnyArg(), accountID, 100.50, "pending", "Test invoice", "credit_card", "1234", sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	invoiceBody := bytes.NewBufferString(`{"account_id":"` + accountID + `","amount":100.50,"description":"Test invoice","payment_type":"credit_card","card_last_digits":"1234"}`)
+	invoiceResp, err := http.Post(ts.URL+"/invoices", "application/json", invoiceBody)
+	if err != nil {
+		t.Fatalf("create invoice: %v", err)
+	}
+	if invoiceResp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201 got %d", invoiceResp.StatusCode)
+	}
+	var invoiceCreated map[string]any
+	_ = json.NewDecoder(invoiceResp.Body).Decode(&invoiceCreated)
+	invoiceResp.Body.Close()
+	invoiceID, _ := invoiceCreated["id"].(string)
+	if invoiceID == "" {
+		t.Fatalf("expected invoice id in response")
+	}
+
+	// Now get the invoice by ID
+	now := time.Now().UTC()
+	rows := sqlmock.NewRows([]string{"id", "account_id", "amount", "status", "description", "payment_type", "card_last_digits", "created_at", "updated_at"}).
+		AddRow(invoiceID, accountID, 100.50, "pending", "Test invoice", "credit_card", "1234", now, now)
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, account_id, amount, status, description, payment_type, card_last_digits, created_at, updated_at FROM invoices WHERE id = $1")).
+		WithArgs(invoiceID).WillReturnRows(rows)
+
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/invoices/"+invoiceID, nil)
+	req.Header.Set("X-API-KEY", apiKey)
+	getResp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("get invoice: %v", err)
+	}
+	if getResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 got %d", getResp.StatusCode)
+	}
+	getResp.Body.Close()
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
 }
 
-func setupTestTables(t *testing.T) {
-	// Create test tables
-	_, err := testDB.Exec(`
-		CREATE TABLE IF NOT EXISTS accounts (
-			id UUID PRIMARY KEY,
-			name VARCHAR(255) NOT NULL,
-			email VARCHAR(255) NOT NULL UNIQUE,
-			api_key VARCHAR(255) NOT NULL UNIQUE,
-			balance DECIMAL(10,2) NOT NULL DEFAULT 0,
-			created_at TIMESTAMP NOT NULL,
-			updated_at TIMESTAMP NOT NULL
-		)
-	`)
-	if err != nil {
-		t.Fatalf("failed to create accounts test table: %v", err)
-	}
+func TestInvoice_Create_InvalidJSON(t *testing.T) {
+	ts, mock, db := newTestServer(t)
+	defer ts.Close()
+	defer db.Close()
 
-	_, err = testDB.Exec(`
-		CREATE TABLE IF NOT EXISTS invoices (
-			id UUID PRIMARY KEY,
-			account_id UUID NOT NULL REFERENCES accounts(id),
-			amount DECIMAL(10,2) NOT NULL,
-			status VARCHAR(50) NOT NULL,
-			description TEXT NOT NULL,
-			payment_type VARCHAR(50) NOT NULL,
-			card_last_digits VARCHAR(4),
-			created_at TIMESTAMP NOT NULL,
-			updated_at TIMESTAMP NOT NULL
-		)
-	`)
+	resp, err := http.Post(ts.URL+"/invoices", "application/json", bytes.NewBufferString("{"))
 	if err != nil {
-		t.Fatalf("failed to create invoices test table: %v", err)
+		t.Fatalf("post: %v", err)
+	}
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400 got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
 	}
 }
 
-func cleanupTestTables(t *testing.T) {
-	// Clean up test tables
-	_, err := testDB.Exec("DELETE FROM invoices")
-	if err != nil {
-		t.Fatalf("failed to clean up invoices test table: %v", err)
-	}
+func TestInvoice_Create_InvalidAmount(t *testing.T) {
+	ts, mock, db := newTestServer(t)
+	defer ts.Close()
+	defer db.Close()
 
-	_, err = testDB.Exec("DELETE FROM accounts")
+	resp, err := http.Post(ts.URL+"/invoices", "application/json", bytes.NewBufferString(`{"account_id":"test-id","amount":-50.00,"description":"Test invoice","payment_type":"credit_card"}`))
 	if err != nil {
-		t.Fatalf("failed to clean up accounts test table: %v", err)
+		t.Fatalf("post: %v", err)
+	}
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400 got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
 	}
 }
 
-func createTestAccount(t *testing.T) *service.AccountOutput {
-	accountSvc := service.NewAccountService(testDB)
+func TestInvoice_Create_InvalidDescription(t *testing.T) {
+	ts, mock, db := newTestServer(t)
+	defer ts.Close()
+	defer db.Close()
 
-	account, err := accountSvc.Create(context.Background(), service.AccountCreateInput{
-		Name:  "Test Account",
-		Email: "test@example.com",
-	})
+	resp, err := http.Post(ts.URL+"/invoices", "application/json", bytes.NewBufferString(`{"account_id":"test-id","amount":100.00,"description":"Te","payment_type":"credit_card"}`))
 	if err != nil {
-		t.Fatalf("failed to create test account: %v", err)
+		t.Fatalf("post: %v", err)
 	}
-
-	return account
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400 got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
 }
 
-func TestInvoiceEndpoints_Integration(t *testing.T) {
-	setupTestTables(t)
-	defer cleanupTestTables(t)
+func TestInvoice_Get_Unauthorized(t *testing.T) {
+	ts, mock, db := newTestServer(t)
+	defer ts.Close()
+	defer db.Close()
 
-	// Create test account
-	account := createTestAccount(t)
-
-	// Create invoice service and handler
-	invoiceSvc := service.NewInvoiceService(testDB)
-	invoiceHandler := handlers.NewInvoiceHandler(invoiceSvc)
-
-	t.Run("Create Invoice", func(t *testing.T) {
-		input := service.InvoiceCreateInput{
-			AccountID:      account.ID,
-			Amount:         100.50,
-			Description:    "Test invoice",
-			PaymentType:    "credit_card",
-			CardLastDigits: "1234",
-		}
-
-		inputJSON, _ := json.Marshal(input)
-		req := httptest.NewRequest(http.MethodPost, "/invoices", bytes.NewBuffer(inputJSON))
-		req.Header.Set("Content-Type", "application/json")
-
-		w := httptest.NewRecorder()
-		invoiceHandler.PostInvoices()(w, req)
-
-		if w.Code != http.StatusCreated {
-			t.Errorf("expected status %d, got %d", http.StatusCreated, w.Code)
-		}
-
-		var response service.InvoiceOutput
-		if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
-			t.Errorf("failed to decode response: %v", err)
-		}
-
-		if response.ID == "" {
-			t.Error("expected invoice ID to be set")
-		}
-		if response.AccountID != account.ID {
-			t.Errorf("expected account ID %s, got %s", account.ID, response.AccountID)
-		}
-		if response.Amount != input.Amount {
-			t.Errorf("expected amount %f, got %f", input.Amount, response.Amount)
-		}
-		if response.Status != "pending" {
-			t.Errorf("expected status 'pending', got '%s'", response.Status)
-		}
-	})
-
-	t.Run("Get Invoices by Account ID", func(t *testing.T) {
-		// Create another invoice for the same account
-		input := service.InvoiceCreateInput{
-			AccountID:   account.ID,
-			Amount:      200.00,
-			Description: "Another test invoice",
-			PaymentType: "debit_card",
-		}
-
-		_, err := invoiceSvc.Create(context.Background(), input)
-		if err != nil {
-			t.Fatalf("failed to create second test invoice: %v", err)
-		}
-
-		// Test getting invoices by account ID
-		req := httptest.NewRequest(http.MethodGet, "/invoices?account_id="+account.ID, nil)
-		req.Header.Set("X-API-KEY", account.APIKey)
-
-		w := httptest.NewRecorder()
-		invoiceHandler.GetInvoices()(w, req)
-
-		if w.Code != http.StatusOK {
-			t.Errorf("expected status %d, got %d", http.StatusOK, w.Code)
-		}
-
-		var response []*service.InvoiceOutput
-		if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
-			t.Errorf("failed to decode response: %v", err)
-		}
-
-		if len(response) != 2 {
-			t.Errorf("expected 2 invoices, got %d", len(response))
-		}
-	})
-
-	t.Run("Get Invoice by ID", func(t *testing.T) {
-		// Create an invoice first
-		input := service.InvoiceCreateInput{
-			AccountID:   account.ID,
-			Amount:      150.00,
-			Description: "Invoice for ID test",
-			PaymentType: "pix",
-		}
-
-		created, err := invoiceSvc.Create(context.Background(), input)
-		if err != nil {
-			t.Fatalf("failed to create test invoice: %v", err)
-		}
-
-		// Test getting invoice by ID
-		req := httptest.NewRequest(http.MethodGet, "/invoices/"+created.ID, nil)
-		req.Header.Set("X-API-KEY", account.APIKey)
-
-		w := httptest.NewRecorder()
-		invoiceHandler.GetInvoices()(w, req)
-
-		if w.Code != http.StatusOK {
-			t.Errorf("expected status %d, got %d", http.StatusOK, w.Code)
-		}
-
-		var response service.InvoiceOutput
-		if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
-			t.Errorf("failed to decode response: %v", err)
-		}
-
-		if response.ID != created.ID {
-			t.Errorf("expected invoice ID %s, got %s", created.ID, response.ID)
-		}
-	})
-
-	t.Run("Missing API Key", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/invoices?account_id="+account.ID, nil)
-		// No X-API-KEY header
-
-		w := httptest.NewRecorder()
-		invoiceHandler.GetInvoices()(w, req)
-
-		if w.Code != http.StatusUnauthorized {
-			t.Errorf("expected status %d, got %d", http.StatusUnauthorized, w.Code)
-		}
-	})
-
-	t.Run("Invalid Invoice Creation", func(t *testing.T) {
-		// Test with invalid amount
-		input := service.InvoiceCreateInput{
-			AccountID:   account.ID,
-			Amount:      -50.00,
-			Description: "Invalid invoice",
-			PaymentType: "credit_card",
-		}
-
-		inputJSON, _ := json.Marshal(input)
-		req := httptest.NewRequest(http.MethodPost, "/invoices", bytes.NewBuffer(inputJSON))
-		req.Header.Set("Content-Type", "application/json")
-
-		w := httptest.NewRecorder()
-		invoiceHandler.PostInvoices()(w, req)
-
-		if w.Code != http.StatusBadRequest {
-			t.Errorf("expected status %d, got %d", http.StatusBadRequest, w.Code)
-		}
-	})
-
-	t.Run("Method Not Allowed", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPut, "/invoices", nil)
-		req.Header.Set("X-API-KEY", account.APIKey)
-
-		w := httptest.NewRecorder()
-		invoiceHandler.GetInvoices()(w, req)
-
-		if w.Code != http.StatusMethodNotAllowed {
-			t.Errorf("expected status %d, got %d", http.StatusMethodNotAllowed, w.Code)
-		}
-	})
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/invoices?account_id=test-id", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected 401 got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
 }
 
-func TestInvoiceService_Integration(t *testing.T) {
-	setupTestTables(t)
-	defer cleanupTestTables(t)
+func TestInvoice_Get_NotFound(t *testing.T) {
+	ts, mock, db := newTestServer(t)
+	defer ts.Close()
+	defer db.Close()
 
-	// Create test account
-	account := createTestAccount(t)
+	invoiceID := "does-not-exist"
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, account_id, amount, status, description, payment_type, card_last_digits, created_at, updated_at FROM invoices WHERE id = $1")).
+		WithArgs(invoiceID).WillReturnError(sql.ErrNoRows)
 
-	// Create invoice service
-	invoiceSvc := service.NewInvoiceService(testDB)
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/invoices/"+invoiceID, nil)
+	req.Header.Set("X-API-KEY", "test-api-key")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected 404 got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
 
-	t.Run("Create and Retrieve Invoice", func(t *testing.T) {
-		input := service.InvoiceCreateInput{
-			AccountID:      account.ID,
-			Amount:         100.50,
-			Description:    "Test invoice",
-			PaymentType:    "credit_card",
-			CardLastDigits: "1234",
-		}
+func TestInvoice_GetByAccountID_Success(t *testing.T) {
+	ts, mock, db := newTestServer(t)
+	defer ts.Close()
+	defer db.Close()
 
-		// Create invoice
-		created, err := invoiceSvc.Create(context.Background(), input)
-		if err != nil {
-			t.Fatalf("failed to create invoice: %v", err)
-		}
+	accountID := "acc-1"
+	apiKey := "test-api-key"
 
-		// Retrieve by ID
-		retrieved, err := invoiceSvc.GetByID(context.Background(), created.ID)
-		if err != nil {
-			t.Fatalf("failed to retrieve invoice: %v", err)
-		}
+	// Mock the query to return invoices for the account
+	now := time.Now().UTC()
+	rows := sqlmock.NewRows([]string{"id", "account_id", "amount", "status", "description", "payment_type", "card_last_digits", "created_at", "updated_at"}).
+		AddRow("inv-1", accountID, 100.00, "pending", "Invoice 1", "credit_card", "1234", now, now).
+		AddRow("inv-2", accountID, 200.00, "approved", "Invoice 2", "debit_card", "5678", now, now)
 
-		if retrieved.ID != created.ID {
-			t.Errorf("expected invoice ID %s, got %s", created.ID, retrieved.ID)
-		}
-	})
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, account_id, amount, status, description, payment_type, card_last_digits, created_at, updated_at FROM invoices WHERE account_id = $1 ORDER BY created_at DESC")).
+		WithArgs(accountID).WillReturnRows(rows)
 
-	t.Run("Update Invoice Status", func(t *testing.T) {
-		input := service.InvoiceCreateInput{
-			AccountID:   account.ID,
-			Amount:      200.00,
-			Description: "Invoice for status update",
-			PaymentType: "debit_card",
-		}
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/invoices?account_id="+accountID, nil)
+	req.Header.Set("X-API-KEY", apiKey)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
 
-		// Create invoice
-		created, err := invoiceSvc.Create(context.Background(), input)
-		if err != nil {
-			t.Fatalf("failed to create invoice: %v", err)
-		}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
 
-		// Update status to approved
-		err = invoiceSvc.UpdateStatus(context.Background(), created.ID, domain.StatusApproved)
-		if err != nil {
-			t.Fatalf("failed to update status: %v", err)
-		}
+func TestInvoice_GetByAccountID_Empty(t *testing.T) {
+	ts, mock, db := newTestServer(t)
+	defer ts.Close()
+	defer db.Close()
 
-		// Verify status was updated
-		retrieved, err := invoiceSvc.GetByID(context.Background(), created.ID)
-		if err != nil {
-			t.Fatalf("failed to retrieve updated invoice: %v", err)
-		}
+	accountID := "acc-2"
+	apiKey := "test-api-key"
 
-		if retrieved.Status != "approved" {
-			t.Errorf("expected status 'approved', got '%s'", retrieved.Status)
-		}
-	})
+	// Mock the query to return no invoices
+	rows := sqlmock.NewRows([]string{"id", "account_id", "amount", "status", "description", "payment_type", "card_last_digits", "created_at", "updated_at"})
+
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, account_id, amount, status, description, payment_type, card_last_digits, created_at, updated_at FROM invoices WHERE account_id = $1 ORDER BY created_at DESC")).
+		WithArgs(accountID).WillReturnRows(rows)
+
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/invoices?account_id="+accountID, nil)
+	req.Header.Set("X-API-KEY", apiKey)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
 }

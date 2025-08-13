@@ -1,4 +1,6 @@
 ### Test Invoice Endpoints
+@apiKey = 8c70006e-ca33-4520-b00c-fe4a4ea2bbb1
+@account_id = 6d75cfdf-f1aa-453d-aca3-7083b4d91cbd
 
 ### 1. Create an Account first (if needed)
 POST http://localhost:8080/accounts
@@ -34,11 +36,11 @@ Content-Type: application/json
 
 ### 4. Get Invoices by Account ID
 GET http://localhost:8080/invoices?account_id={{account_id}}
-X-API-KEY: {{api_key}}
+X-API-KEY: {{apiKey}}
 
 ### 5. Get Invoice by ID
 GET http://localhost:8080/invoices/{{invoice_id}}
-X-API-KEY: {{api_key}}
+X-API-KEY: {{apiKey}}
 
 ### 6. Test invalid invoice creation (negative amount)
 POST http://localhost:8080/invoices
@@ -78,7 +80,7 @@ GET http://localhost:8080/invoices?account_id={{account_id}}
 
 ### 10. Test method not allowed
 PUT http://localhost:8080/invoices
-X-API-KEY: {{api_key}}
+X-API-KEY: {{apiKey}}
 
 ### 11. Test invalid account ID
 POST http://localhost:8080/invoices
