@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"errors"
 	"testing"
 	"time"
 )
@@ -128,6 +129,7 @@ func TestNewInvoice(t *testing.T) {
 }
 
 func TestInvoice_Process(t *testing.T) {
+	// Test with default processor (random behavior)
 	invoice, err := NewInvoice("test-account-id", "Test invoice", "credit_card", 100.50, "1234")
 	if err != nil {
 		t.Fatalf("failed to create test invoice: %v", err)
@@ -162,15 +164,116 @@ func TestInvoice_Process(t *testing.T) {
 	}
 }
 
+func TestInvoice_Process_WithTestProcessor(t *testing.T) {
+	// Test with controlled test processor
+	testProcessor := NewTestInvoiceProcessor()
+
+	invoice, err := NewInvoiceWithProcessor("test-account-id", "Test invoice", "credit_card", 100.50, "1234", testProcessor)
+	if err != nil {
+		t.Fatalf("failed to create test invoice: %v", err)
+	}
+
+	// Test forced approval
+	testProcessor.SetNextStatus(StatusApproved)
+	err = invoice.Process()
+	if err != nil {
+		t.Errorf("failed to process invoice: %v", err)
+	}
+	if invoice.Status != StatusApproved {
+		t.Errorf("expected status %s, got %s", StatusApproved, invoice.Status)
+	}
+
+	// Reset to pending and test forced rejection
+	err = invoice.UpdateStatus(StatusPending)
+	if err != nil {
+		t.Fatalf("failed to reset status: %v", err)
+	}
+
+	testProcessor.SetNextStatus(StatusRejected)
+	err = invoice.Process()
+	if err != nil {
+		t.Errorf("failed to process invoice: %v", err)
+	}
+	if invoice.Status != StatusRejected {
+		t.Errorf("expected status %s, got %s", StatusRejected, invoice.Status)
+	}
+
+	// Test error condition
+	err = invoice.UpdateStatus(StatusPending)
+	if err != nil {
+		t.Fatalf("failed to reset status: %v", err)
+	}
+
+	testProcessor.SetError(errors.New("test error"))
+	err = invoice.Process()
+	if err == nil {
+		t.Error("expected error but got none")
+	}
+	if err.Error() != "test error" {
+		t.Errorf("expected error 'test error', got '%v'", err)
+	}
+}
+
+func TestInvoice_Process_WithSeedProcessor(t *testing.T) {
+	// Test with processor using specific seed for deterministic behavior
+	seed := int64(12345)
+	processor := NewDefaultInvoiceProcessorWithSeed(seed)
+
+	invoice, err := NewInvoiceWithProcessor("test-account-id", "Test invoice", "credit_card", 100.50, "1234", processor)
+	if err != nil {
+		t.Fatalf("failed to create test invoice: %v", err)
+	}
+
+	// Process with known seed - should give consistent result
+	err = invoice.Process()
+	if err != nil {
+		t.Errorf("failed to process invoice: %v", err)
+	}
+
+	// With seed 12345, we should get a consistent result
+	expectedStatus := invoice.Status
+
+	// Create another invoice with same seed and verify same result
+	// Note: We need to create a new processor with the same seed for the second invoice
+	processor2 := NewDefaultInvoiceProcessorWithSeed(seed)
+	invoice2, err := NewInvoiceWithProcessor("test-account-id-2", "Test invoice 2", "credit_card", 200.00, "5678", processor2)
+	if err != nil {
+		t.Fatalf("failed to create second test invoice: %v", err)
+	}
+
+	err = invoice2.Process()
+	if err != nil {
+		t.Errorf("failed to process second invoice: %v", err)
+	}
+
+	if invoice2.Status != expectedStatus {
+		t.Errorf("expected same status with same seed, got %s vs %s", expectedStatus, invoice2.Status)
+	}
+}
+
 func TestInvoice_Process_RejectedCase(t *testing.T) {
-	// Create multiple invoices to increase chances of getting a rejected one
-	// Since Process() uses random, we'll create several and check if any get rejected
+	// Test with controlled processor to ensure we get both outcomes
+	// Create invoices with controlled outcomes
 	invoices := make([]*Invoice, 0, 10)
 
-	for i := 0; i < 10; i++ {
-		invoice, err := NewInvoice("test-account-id", "Test invoice", "credit_card", 100.50, "1234")
+	// First 7 invoices will be approved (70%)
+	for i := 0; i < 7; i++ {
+		testProcessor := NewTestInvoiceProcessor()
+		testProcessor.SetNextStatus(StatusApproved)
+		invoice, err := NewInvoiceWithProcessor("test-account-id", "Test invoice", "credit_card", 100.50, "1234", testProcessor)
 		if err != nil {
 			t.Fatalf("failed to create test invoice %d: %v", i, err)
+		}
+		invoices = append(invoices, invoice)
+	}
+
+	// Last 3 invoices will be rejected (30%)
+	for i := 0; i < 3; i++ {
+		testProcessor := NewTestInvoiceProcessor()
+		testProcessor.SetNextStatus(StatusRejected)
+		invoice, err := NewInvoiceWithProcessor("test-account-id", "Test invoice", "credit_card", 100.50, "1234", testProcessor)
+		if err != nil {
+			t.Fatalf("failed to create test invoice %d: %v", i+7, err)
 		}
 		invoices = append(invoices, invoice)
 	}
@@ -214,16 +317,13 @@ func TestInvoice_Process_RejectedCase(t *testing.T) {
 	// Log the distribution for debugging
 	t.Logf("Processing results: %d approved, %d rejected", approvedCount, rejectedCount)
 
-	// Verify that we have both approved and rejected invoices
-	// This test might occasionally fail due to randomness, but statistically it should work
-	if rejectedCount == 0 {
-		t.Log("No invoices were rejected - this might happen due to randomness, but statistically unlikely")
-		// We don't fail the test here since it's based on random behavior
+	// With controlled processor, we should get exactly what we set
+	if rejectedCount != 3 {
+		t.Errorf("expected 3 rejected invoices, got %d", rejectedCount)
 	}
 
-	if approvedCount == 0 {
-		t.Log("No invoices were approved - this might happen due to randomness, but statistically unlikely")
-		// We don't fail the test here since it's based on random behavior
+	if approvedCount != 7 {
+		t.Errorf("expected 7 approved invoices, got %d", approvedCount)
 	}
 
 	// Verify that the total adds up
@@ -233,21 +333,18 @@ func TestInvoice_Process_RejectedCase(t *testing.T) {
 }
 
 func TestInvoice_Process_ForceRejection(t *testing.T) {
-	// This test creates a scenario where we can better control the random behavior
-	// by processing invoices with small time differences to get different random seeds
-
-	// Create invoices with small delays to get different random seeds
+	// Test with controlled processor to force rejection scenario
+	// Create 20 invoices, all will be rejected
 	invoices := make([]*Invoice, 0, 20)
 
 	for i := 0; i < 20; i++ {
-		invoice, err := NewInvoice("test-account-id", "Test invoice", "credit_card", 100.50, "1234")
+		testProcessor := NewTestInvoiceProcessor()
+		testProcessor.SetNextStatus(StatusRejected)
+		invoice, err := NewInvoiceWithProcessor("test-account-id", "Test invoice", "credit_card", 100.50, "1234", testProcessor)
 		if err != nil {
 			t.Fatalf("failed to create test invoice %d: %v", i, err)
 		}
 		invoices = append(invoices, invoice)
-
-		// Small delay to ensure different random seeds
-		time.Sleep(1 * time.Millisecond)
 	}
 
 	// Process all invoices
@@ -289,15 +386,13 @@ func TestInvoice_Process_ForceRejection(t *testing.T) {
 	// Log the distribution for debugging
 	t.Logf("Processing results: %d approved, %d rejected", approvedCount, rejectedCount)
 
-	// With 20 invoices and 30% chance of rejection, we should statistically get some rejections
-	if rejectedCount == 0 {
-		t.Log("No invoices were rejected - this might happen due to randomness, but statistically unlikely with 20 invoices")
-		// We don't fail the test here since it's based on random behavior
+	// With controlled processor, all should be rejected
+	if rejectedCount != 20 {
+		t.Errorf("expected 20 rejected invoices, got %d", rejectedCount)
 	}
 
-	if approvedCount == 0 {
-		t.Log("No invoices were approved - this might happen due to randomness, but statistically unlikely with 20 invoices")
-		// We don't fail the test here since it's based on random behavior
+	if approvedCount != 0 {
+		t.Errorf("expected 0 approved invoices, got %d", approvedCount)
 	}
 
 	// Verify that the total adds up
@@ -307,14 +402,14 @@ func TestInvoice_Process_ForceRejection(t *testing.T) {
 
 	// Log some statistics
 	rejectionRate := float64(rejectedCount) / float64(len(invoices))
-	t.Logf("Rejection rate: %.2f%% (expected around 30%%)", rejectionRate*100)
+	t.Logf("Rejection rate: %.2f%% (expected 100%%)", rejectionRate*100)
 }
 
 func TestInvoice_Process_RejectionLogic(t *testing.T) {
-	// This test verifies that the rejection logic in Process() works correctly
-	// We'll test the specific conditions that lead to rejection
+	// Test with controlled processor to verify rejection logic
+	testProcessor := NewTestInvoiceProcessor()
 
-	invoice, err := NewInvoice("test-account-id", "Test invoice", "credit_card", 100.50, "1234")
+	invoice, err := NewInvoiceWithProcessor("test-account-id", "Test invoice", "credit_card", 100.50, "1234", testProcessor)
 	if err != nil {
 		t.Fatalf("failed to create test invoice: %v", err)
 	}
@@ -324,25 +419,22 @@ func TestInvoice_Process_RejectionLogic(t *testing.T) {
 		t.Errorf("expected initial status to be pending, got %s", invoice.Status)
 	}
 
-	// Process the invoice
+	// Process the invoice with controlled outcome
+	testProcessor.SetNextStatus(StatusRejected)
 	err = invoice.Process()
 	if err != nil {
 		t.Errorf("failed to process invoice: %v", err)
 	}
 
-	// Verify that the status changed from pending
-	if invoice.Status == StatusPending {
-		t.Error("expected status to change from pending after processing")
-	}
-
-	// Verify that the status is one of the expected values
-	if invoice.Status != StatusApproved && invoice.Status != StatusRejected {
-		t.Errorf("expected status to be either approved or rejected, got %s", invoice.Status)
+	// Verify that the status changed to rejected
+	if invoice.Status != StatusRejected {
+		t.Errorf("expected status to be rejected, got %s", invoice.Status)
 	}
 
 	// Verify that UpdatedAt was updated
-	if invoice.UpdatedAt.Equal(invoice.CreatedAt) {
-		t.Error("expected UpdatedAt to be different from CreatedAt after processing")
+	// Note: Since processing happens immediately after creation, we just verify it's not zero
+	if invoice.UpdatedAt.IsZero() {
+		t.Error("expected UpdatedAt to be set after processing")
 	}
 
 	// Test that we can't process a non-pending invoice
@@ -352,7 +444,7 @@ func TestInvoice_Process_RejectionLogic(t *testing.T) {
 	}
 
 	// Test the specific rejection scenario by creating a new invoice and forcing it to rejected status
-	invoice2, err := NewInvoice("test-account-id-2", "Test invoice 2", "credit_card", 200.00, "5678")
+	invoice2, err := NewInvoiceWithProcessor("test-account-id-2", "Test invoice 2", "credit_card", 200.00, "5678", testProcessor)
 	if err != nil {
 		t.Fatalf("failed to create second test invoice: %v", err)
 	}
@@ -397,23 +489,30 @@ func TestInvoice_Process_RejectionLogic(t *testing.T) {
 }
 
 func TestInvoice_Process_RejectionCondition(t *testing.T) {
-	// This test specifically verifies the rejection condition logic
-	// We'll test that invoices can indeed be rejected by the Process() method
+	// Test with controlled processor to verify rejection conditions
+	// Create 50 invoices with controlled outcomes
+	invoices := make([]*Invoice, 0, 50)
 
-	// Create multiple invoices and process them to test the random behavior
-	// The goal is to verify that the rejection logic works when randomSource.Float64() > 0.7
-
-	invoices := make([]*Invoice, 0, 50) // Increase sample size for better statistical coverage
-
-	for i := 0; i < 50; i++ {
-		invoice, err := NewInvoice("test-account-id", "Test invoice", "credit_card", 100.50, "1234")
+	// First 35 invoices will be approved (70%)
+	for i := 0; i < 35; i++ {
+		testProcessor := NewTestInvoiceProcessor()
+		testProcessor.SetNextStatus(StatusApproved)
+		invoice, err := NewInvoiceWithProcessor("test-account-id", "Test invoice", "credit_card", 100.50, "1234", testProcessor)
 		if err != nil {
 			t.Fatalf("failed to create test invoice %d: %v", i, err)
 		}
 		invoices = append(invoices, invoice)
+	}
 
-		// Small delay to ensure different random seeds
-		time.Sleep(1 * time.Millisecond)
+	// Last 15 invoices will be rejected (30%)
+	for i := 0; i < 15; i++ {
+		testProcessor := NewTestInvoiceProcessor()
+		testProcessor.SetNextStatus(StatusRejected)
+		invoice, err := NewInvoiceWithProcessor("test-account-id", "Test invoice", "credit_card", 100.50, "1234", testProcessor)
+		if err != nil {
+			t.Fatalf("failed to create test invoice %d: %v", i+35, err)
+		}
+		invoices = append(invoices, invoice)
 	}
 
 	// Process all invoices
@@ -455,17 +554,13 @@ func TestInvoice_Process_RejectionCondition(t *testing.T) {
 	// Log the distribution for debugging
 	t.Logf("Processing results: %d approved, %d rejected", approvedCount, rejectedCount)
 
-	// With 50 invoices and 30% chance of rejection, we should statistically get some rejections
-	// The probability of getting 0 rejections with 50 invoices and 30% rejection rate is very low
-	if rejectedCount == 0 {
-		t.Log("No invoices were rejected - this might happen due to randomness, but statistically very unlikely with 50 invoices")
-		t.Log("This could indicate an issue with the random seed generation or the rejection logic")
-		// We don't fail the test here since it's based on random behavior, but we log it
+	// With controlled processor, we should get exactly what we set
+	if rejectedCount != 15 {
+		t.Errorf("expected 15 rejected invoices, got %d", rejectedCount)
 	}
 
-	if approvedCount == 0 {
-		t.Log("No invoices were approved - this might happen due to randomness, but statistically very unlikely with 50 invoices")
-		// We don't fail the test here since it's based on random behavior
+	if approvedCount != 35 {
+		t.Errorf("expected 35 approved invoices, got %d", approvedCount)
 	}
 
 	// Verify that the total adds up
@@ -475,7 +570,7 @@ func TestInvoice_Process_RejectionCondition(t *testing.T) {
 
 	// Log some statistics
 	rejectionRate := float64(rejectedCount) / float64(len(invoices))
-	t.Logf("Rejection rate: %.2f%% (expected around 30%%)", rejectionRate*100)
+	t.Logf("Rejection rate: %.2f%% (expected 30%%)", rejectionRate*100)
 
 	// Test the specific rejection condition logic
 	// The Process() method should work as follows:
@@ -490,8 +585,13 @@ func TestInvoice_Process_RejectionCondition(t *testing.T) {
 	t.Logf("Has rejected invoices: %v", hasRejected)
 
 	// This test verifies that the rejection logic is working
-	// Even if we don't get rejections in this run, the test structure ensures
-	// that the rejection path in the code is tested
+	// With controlled processor, we get exactly what we expect
+	if !hasApproved {
+		t.Error("expected to have approved invoices")
+	}
+	if !hasRejected {
+		t.Error("expected to have rejected invoices")
+	}
 }
 
 func TestInvoice_UpdateStatus(t *testing.T) {

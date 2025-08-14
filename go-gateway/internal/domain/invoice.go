@@ -26,6 +26,98 @@ const (
 	StatusRejected Status = "rejected"
 )
 
+// TestInvoiceProcessor implements a processor for testing that allows full control
+type TestInvoiceProcessor struct {
+	nextStatus Status
+	shouldErr  bool
+	err        error
+}
+
+// NewTestInvoiceProcessor creates a new test processor
+func NewTestInvoiceProcessor() *TestInvoiceProcessor {
+	return &TestInvoiceProcessor{
+		nextStatus: StatusApproved,
+		shouldErr:  false,
+		err:        nil,
+	}
+}
+
+// SetNextStatus sets the next status that will be returned
+func (p *TestInvoiceProcessor) SetNextStatus(status Status) {
+	p.nextStatus = status
+}
+
+// SetError sets an error to be returned
+func (p *TestInvoiceProcessor) SetError(err error) {
+	p.shouldErr = true
+	p.err = err
+}
+
+// ClearError clears any error condition
+func (p *TestInvoiceProcessor) ClearError() {
+	p.shouldErr = false
+	p.err = nil
+}
+
+// ProcessInvoice processes an invoice with the configured test behavior
+func (p *TestInvoiceProcessor) ProcessInvoice(invoice *Invoice) error {
+	if p.shouldErr {
+		return p.err
+	}
+
+	if invoice.Status != StatusPending {
+		return errors.New("invoice: can only process pending invoices")
+	}
+
+	invoice.Status = p.nextStatus
+	invoice.UpdatedAt = time.Now().UTC()
+
+	return nil
+}
+
+// InvoiceProcessor defines the interface for processing invoices
+type InvoiceProcessor interface {
+	ProcessInvoice(invoice *Invoice) error
+}
+
+// DefaultInvoiceProcessor implements the default random processing logic
+type DefaultInvoiceProcessor struct {
+	randomSource *rand.Rand
+}
+
+// NewDefaultInvoiceProcessor creates a new default processor with current time seed
+func NewDefaultInvoiceProcessor() *DefaultInvoiceProcessor {
+	return &DefaultInvoiceProcessor{
+		randomSource: rand.New(rand.NewSource(time.Now().Unix())),
+	}
+}
+
+// NewDefaultInvoiceProcessorWithSeed creates a new default processor with a specific seed
+func NewDefaultInvoiceProcessorWithSeed(seed int64) *DefaultInvoiceProcessor {
+	return &DefaultInvoiceProcessor{
+		randomSource: rand.New(rand.NewSource(seed)),
+	}
+}
+
+// ProcessInvoice processes an invoice using random logic (70% approved, 30% rejected)
+func (p *DefaultInvoiceProcessor) ProcessInvoice(invoice *Invoice) error {
+	if invoice.Status != StatusPending {
+		return errors.New("invoice: can only process pending invoices")
+	}
+
+	var newStatus Status
+	if p.randomSource.Float64() <= 0.7 {
+		newStatus = StatusApproved
+	} else {
+		newStatus = StatusRejected
+	}
+
+	invoice.Status = newStatus
+	invoice.UpdatedAt = time.Now().UTC()
+
+	return nil
+}
+
 // Invoice represents a payment invoice that belongs to an account
 type Invoice struct {
 	ID             string
@@ -38,6 +130,7 @@ type Invoice struct {
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
 	mu             sync.RWMutex
+	processor      InvoiceProcessor // Processor for this invoice
 }
 
 // NewInvoice creates a new Invoice with generated ID and timestamps.
@@ -66,34 +159,57 @@ func NewInvoice(accountID, description, paymentType string, amount float64, card
 		CardLastDigits: cardLastDigits,
 		CreatedAt:      now,
 		UpdatedAt:      now,
+		processor:      NewDefaultInvoiceProcessor(),
 	}, nil
 }
 
-// Process updates the invoice status and emits events for processing
+// NewInvoiceWithProcessor creates a new Invoice with a custom processor
+func NewInvoiceWithProcessor(accountID, description, paymentType string, amount float64, cardLastDigits string, processor InvoiceProcessor) (*Invoice, error) {
+	if len(accountID) == 0 {
+		return nil, errors.New("invoice: account ID is required")
+	}
+	if len(description) < 3 {
+		return nil, ErrInvalidDescription
+	}
+	if len(paymentType) == 0 {
+		return nil, ErrInvalidPaymentType
+	}
+	if amount <= 0 {
+		return nil, ErrInvoiceNegativeValue
+	}
+
+	now := time.Now().UTC()
+	return &Invoice{
+		ID:             uuid.New().String(),
+		AccountID:      accountID,
+		Amount:         amount,
+		Status:         StatusPending,
+		Description:    description,
+		PaymentType:    paymentType,
+		CardLastDigits: cardLastDigits,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+		processor:      processor,
+	}, nil
+}
+
+// SetProcessor allows changing the processor for an invoice
+func (i *Invoice) SetProcessor(processor InvoiceProcessor) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	i.processor = processor
+}
+
+// Process updates the invoice status using the configured processor
 func (i *Invoice) Process() error {
 	i.mu.Lock()
 	defer i.mu.Unlock()
 
-	if i.Status != StatusPending {
-		return errors.New("invoice: can only process pending invoices")
+	if i.processor == nil {
+		i.processor = NewDefaultInvoiceProcessor()
 	}
 
-	randomSource := rand.New(rand.NewSource(time.Now().Unix()))
-	var newStatus Status
-
-	if randomSource.Float64() <= 0.7 {
-		newStatus = StatusApproved
-	} else {
-		newStatus = StatusRejected
-	}
-
-	i.Status = newStatus
-
-	// In a real implementation, this would emit events
-	// For now, we just update the timestamp
-	i.UpdatedAt = time.Now().UTC()
-
-	return nil
+	return i.processor.ProcessInvoice(i)
 }
 
 // UpdateStatus updates the invoice status
