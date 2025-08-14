@@ -94,27 +94,47 @@ func TestPostgresAccountRepository_UpdateBalance(t *testing.T) {
 	repo := NewPostgresAccountRepository(db)
 	ctx := context.Background()
 
+	account := &domain.Account{
+		ID:        "acc-1",
+		Name:      "Acme",
+		Email:     "acme@example.com",
+		APIKey:    "key-1",
+		Balance:   150.0, // Updated balance
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}
+
 	mock.ExpectBegin()
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT id FROM accounts WHERE id = $1 FOR UPDATE")).
 		WithArgs("acc-1").
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("acc-1"))
-	mock.ExpectExec(regexp.QuoteMeta("UPDATE accounts SET balance = balance + $1, updated_at = $2 WHERE id = $3")).
-		WithArgs(100.0, sqlmock.AnyArg(), "acc-1").
+	mock.ExpectExec(regexp.QuoteMeta("UPDATE accounts SET balance = $1, updated_at = $2 WHERE id = $3")).
+		WithArgs(150.0, account.UpdatedAt, "acc-1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
-	if err := repo.UpdateBalance(ctx, "acc-1", 100); err != nil {
+	if err := repo.UpdateBalance(ctx, account); err != nil {
 		t.Fatalf("update balance: %v", err)
 	}
 
 	// Not found: lock query returns no rows
+	missingAccount := &domain.Account{
+		ID:        "missing",
+		Name:      "Missing",
+		Email:     "missing@example.com",
+		APIKey:    "key-missing",
+		Balance:   50.0,
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}
+
 	mock.ExpectBegin()
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT id FROM accounts WHERE id = $1 FOR UPDATE")).
 		WithArgs("missing").
 		WillReturnError(sql.ErrNoRows)
 	mock.ExpectRollback()
 
-	err = repo.UpdateBalance(ctx, "missing", 50)
+	err = repo.UpdateBalance(ctx, missingAccount)
 	if err != domain.ErrAccountNotFound {
 		t.Fatalf("expected not found, got %v", err)
 	}

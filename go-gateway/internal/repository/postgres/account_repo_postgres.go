@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"time"
 
 	"github.com/devfullcycle/imersao22/go-gateway/internal/domain"
 )
@@ -59,7 +58,7 @@ func (r *PostgresAccountRepository) GetByAPIKey(ctx context.Context, apiKey stri
 	return &a, nil
 }
 
-func (r *PostgresAccountRepository) UpdateBalance(ctx context.Context, id string, amount float64) error {
+func (r *PostgresAccountRepository) UpdateBalance(ctx context.Context, account *domain.Account) error {
 	// Perform balance update inside a transaction and lock the row until commit
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -76,7 +75,7 @@ func (r *PostgresAccountRepository) UpdateBalance(ctx context.Context, id string
 	// Lock the account row to avoid concurrent updates
 	const lockQ = `SELECT id FROM accounts WHERE id = $1 FOR UPDATE`
 	var lockedID string
-	if err := tx.QueryRowContext(ctx, lockQ, id).Scan(&lockedID); err != nil {
+	if err := tx.QueryRowContext(ctx, lockQ, account.ID).Scan(&lockedID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return domain.ErrAccountNotFound
 		}
@@ -85,10 +84,10 @@ func (r *PostgresAccountRepository) UpdateBalance(ctx context.Context, id string
 
 	const updQ = `
 		UPDATE accounts
-		SET balance = balance + $1, updated_at = $2
+		SET balance = $1, updated_at = $2
 		WHERE id = $3
 	`
-	res, err := tx.ExecContext(ctx, updQ, amount, time.Now().UTC(), id)
+	res, err := tx.ExecContext(ctx, updQ, account.Balance, account.UpdatedAt, account.ID)
 	if err != nil {
 		return err
 	}

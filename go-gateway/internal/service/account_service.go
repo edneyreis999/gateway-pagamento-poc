@@ -46,8 +46,20 @@ func (s *AccountService) GetByAPIKey(ctx context.Context, apiKey string) (*Accou
 	return toAccountOutput(acc), nil
 }
 
-func (s *AccountService) UpdateBalance(ctx context.Context, id string, amount float64) error {
-	return s.repo.UpdateBalance(ctx, id, amount)
+func (s *AccountService) UpdateBalance(ctx context.Context, apiKey string, amount float64) error {
+	// Get the account by API key
+	account, err := s.repo.GetByAPIKey(ctx, apiKey)
+	if err != nil {
+		return err
+	}
+
+	// Apply business logic: add amount to balance
+	if err := account.AddBalance(amount); err != nil {
+		return err
+	}
+
+	// Save the updated account to the database
+	return s.repo.UpdateBalance(ctx, account)
 }
 
 // toAccountOutput maps domain.Account to output DTO.

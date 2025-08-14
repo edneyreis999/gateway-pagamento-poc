@@ -47,12 +47,25 @@ func (r *InMemoryAccountRepository) GetByAPIKey(ctx context.Context, apiKey stri
 	return nil, domain.ErrAccountNotFound
 }
 
-func (r *InMemoryAccountRepository) UpdateBalance(ctx context.Context, id string, amount float64) error {
+func (r *InMemoryAccountRepository) UpdateBalance(ctx context.Context, a *domain.Account) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	a, ok := r.byID[id]
+
+	// Find the account in memory
+	storedAccount, ok := r.byID[a.ID]
 	if !ok {
 		return domain.ErrAccountNotFound
 	}
-	return a.AddBalance(amount)
+
+	// Update the stored account with the new balance and updated_at
+	storedAccount.Balance = a.Balance
+	storedAccount.UpdatedAt = a.UpdatedAt
+
+	// Also update the API key map
+	if storedAccount.APIKey != a.APIKey {
+		delete(r.byAPIKey, storedAccount.APIKey)
+		r.byAPIKey[a.APIKey] = storedAccount
+	}
+
+	return nil
 }

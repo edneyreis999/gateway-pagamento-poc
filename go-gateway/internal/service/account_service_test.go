@@ -61,16 +61,23 @@ func TestAccountService_UpdateBalance(t *testing.T) {
 	svc := NewAccountService(db)
 	ctx := context.Background()
 
+	// Mock GetByAPIKey call
+	rows := sqlmock.NewRows([]string{"id", "name", "email", "api_key", "balance", "created_at", "updated_at"}).
+		AddRow("acc-1", "Acme", "acme@example.com", "key-1", 100.0, time.Now().UTC(), time.Now().UTC())
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, name, email, api_key, balance, created_at, updated_at FROM accounts WHERE api_key = $1")).
+		WithArgs("key-1").WillReturnRows(rows)
+
+	// Mock UpdateBalance call (transaction)
 	mock.ExpectBegin()
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT id FROM accounts WHERE id = $1 FOR UPDATE")).
 		WithArgs("acc-1").
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("acc-1"))
-	mock.ExpectExec(regexp.QuoteMeta("UPDATE accounts SET balance = balance + $1, updated_at = $2 WHERE id = $3")).
-		WithArgs(10.0, sqlmock.AnyArg(), "acc-1").
+	mock.ExpectExec(regexp.QuoteMeta("UPDATE accounts SET balance = $1, updated_at = $2 WHERE id = $3")).
+		WithArgs(110.0, sqlmock.AnyArg(), "acc-1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
-	if err := svc.UpdateBalance(ctx, "acc-1", 10); err != nil {
+	if err := svc.UpdateBalance(ctx, "key-1", 10); err != nil {
 		t.Fatalf("update: %v", err)
 	}
 

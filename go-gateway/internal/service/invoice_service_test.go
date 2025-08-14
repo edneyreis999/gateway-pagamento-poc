@@ -36,7 +36,7 @@ func (m *mockAccountService) GetByAPIKey(ctx context.Context, apiKey string) (*A
 	return nil, domain.ErrAccountNotFound
 }
 
-func (m *mockAccountService) UpdateBalance(ctx context.Context, id string, amount float64) error {
+func (m *mockAccountService) UpdateBalance(ctx context.Context, apiKey string, amount float64) error {
 	// Not needed for invoice tests
 	return nil
 }

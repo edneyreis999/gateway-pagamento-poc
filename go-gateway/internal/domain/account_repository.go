@@ -7,7 +7,7 @@ type AccountRepository interface {
 	Create(ctx context.Context, a *Account) error
 	GetByID(ctx context.Context, id string) (*Account, error)
 	GetByAPIKey(ctx context.Context, apiKey string) (*Account, error)
-	UpdateBalance(ctx context.Context, id string, amount float64) error
+	UpdateBalance(ctx context.Context, a *Account) error
 }
 
 // Domain-level errors for repository implementations.

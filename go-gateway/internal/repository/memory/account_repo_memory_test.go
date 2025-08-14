@@ -36,11 +36,28 @@ func TestInMemoryAccountRepository(t *testing.T) {
 		t.Fatalf("expected same apikey")
 	}
 
-	if err := repo.UpdateBalance(ctx, a.ID, 50); err != nil {
+	// Test UpdateBalance with account
+	updatedAccount := &domain.Account{
+		ID:        a.ID,
+		Name:      a.Name,
+		Email:     a.Email,
+		APIKey:    a.APIKey,
+		Balance:   50.0,
+		CreatedAt: a.CreatedAt,
+		UpdatedAt: a.UpdatedAt,
+	}
+
+	if err := repo.UpdateBalance(ctx, updatedAccount); err != nil {
 		t.Fatalf("update balance: %v", err)
 	}
-	if a.Balance != 50 {
-		t.Fatalf("expected balance 50, got %v", a.Balance)
+
+	// Verify the balance was updated
+	got3, err := repo.GetByID(ctx, a.ID)
+	if err != nil {
+		t.Fatalf("get by id after update: %v", err)
+	}
+	if got3.Balance != 50.0 {
+		t.Fatalf("expected balance 50, got %v", got3.Balance)
 	}
 
 	if _, err := repo.GetByID(ctx, "does-not-exist"); err == nil {
