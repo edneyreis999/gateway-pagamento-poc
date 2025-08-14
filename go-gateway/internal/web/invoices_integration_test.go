@@ -277,3 +277,71 @@ func TestInvoice_GetByAccountID_Empty(t *testing.T) {
 		t.Fatalf("unmet expectations: %v", err)
 	}
 }
+
+func TestInvoice_Create_HighValueStaysPending(t *testing.T) {
+	ts, mock, db := newTestServer(t)
+	defer ts.Close()
+	defer db.Close()
+
+	// First create an account
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO accounts (id, name, email, api_key, balance, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7)")).
+		WithArgs(sqlmock.AnyArg(), "John Doe", "john@example.com", sqlmock.AnyArg(), 0.0, sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	accountBody := bytes.NewBufferString(`{"name":"John Doe","email":"john@example.com"}`)
+	accountResp, err := http.Post(ts.URL+"/accounts", "application/json", accountBody)
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+	if accountResp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201 got %d", accountResp.StatusCode)
+	}
+	var accountCreated map[string]any
+	_ = json.NewDecoder(accountResp.Body).Decode(&accountCreated)
+	accountResp.Body.Close()
+	accountID, _ := accountCreated["id"].(string)
+	apiKey, _ := accountCreated["api_key"].(string)
+	if accountID == "" || apiKey == "" {
+		t.Fatalf("expected id and api_key in response")
+	}
+
+	// Now create a high value invoice (> 10000)
+	// First mock the GetByAPIKey call that InvoiceService makes
+	now := time.Now().UTC()
+	accountRows := sqlmock.NewRows([]string{"id", "name", "email", "api_key", "balance", "created_at", "updated_at"}).
+		AddRow(accountID, "John Doe", "john@example.com", apiKey, 0.0, now, now)
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, name, email, api_key, balance, created_at, updated_at FROM accounts WHERE api_key = $1")).
+		WithArgs(apiKey).WillReturnRows(accountRows)
+
+	// Then mock the invoice creation
+	// High value invoices (> 10000) should stay pending
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO invoices (id, account_id, amount, status, description, payment_type, card_last_digits, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)")).
+		WithArgs(sqlmock.AnyArg(), accountID, 15000.00, "pending", "High value invoice", "credit_card", "9999", sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	invoiceBody := bytes.NewBufferString(`{"api_key":"` + apiKey + `","account_id":"` + accountID + `","amount":15000.00,"description":"High value invoice","payment_type":"credit_card","card_last_digits":"9999"}`)
+	invoiceResp, err := http.Post(ts.URL+"/invoices", "application/json", invoiceBody)
+	if err != nil {
+		t.Fatalf("create invoice: %v", err)
+	}
+	if invoiceResp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201 got %d", invoiceResp.StatusCode)
+	}
+	var invoiceCreated map[string]any
+	_ = json.NewDecoder(invoiceResp.Body).Decode(&invoiceCreated)
+	invoiceResp.Body.Close()
+	invoiceID, _ := invoiceCreated["id"].(string)
+	if invoiceID == "" {
+		t.Fatalf("expected invoice id in response")
+	}
+
+	// Verify that the high value invoice status is pending
+	invoiceStatus, _ := invoiceCreated["status"].(string)
+	if invoiceStatus != "pending" {
+		t.Errorf("expected high value invoice status to be 'pending', got: %s", invoiceStatus)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}

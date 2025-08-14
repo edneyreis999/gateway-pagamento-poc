@@ -214,6 +214,64 @@ func TestInvoice_Process_WithTestProcessor(t *testing.T) {
 	}
 }
 
+func TestInvoice_Process_HighValuePending(t *testing.T) {
+	// Test that invoices with amount > 10000 stay pending
+	testProcessor := NewTestInvoiceProcessor()
+
+	// Test with amount > 10000 - should stay pending regardless of processor setting
+	testProcessor.SetNextStatus(StatusApproved)
+
+	highValueInvoice, err := NewInvoiceWithProcessor("test-account-id", "High value invoice", "credit_card", 15000.00, "1234", testProcessor)
+	if err != nil {
+		t.Fatalf("failed to create high value invoice: %v", err)
+	}
+
+	// Process should not change status for high value invoices
+	err = highValueInvoice.Process()
+	if err != nil {
+		t.Errorf("failed to process high value invoice: %v", err)
+	}
+
+	// Status should remain pending for amounts > 10000
+	if highValueInvoice.Status != StatusPending {
+		t.Errorf("expected status to remain pending for amount > 10000, got %s", highValueInvoice.Status)
+	}
+
+	// Test with amount exactly 10000 - should be processed normally
+	testProcessor.SetNextStatus(StatusRejected)
+	exactValueInvoice, err := NewInvoiceWithProcessor("test-account-id", "Exact value invoice", "credit_card", 10000.00, "1234", testProcessor)
+	if err != nil {
+		t.Fatalf("failed to create exact value invoice: %v", err)
+	}
+
+	err = exactValueInvoice.Process()
+	if err != nil {
+		t.Errorf("failed to process exact value invoice: %v", err)
+	}
+
+	// Status should be processed for amount = 10000
+	if exactValueInvoice.Status != StatusRejected {
+		t.Errorf("expected status to be processed for amount = 10000, got %s", exactValueInvoice.Status)
+	}
+
+	// Test with amount < 10000 - should be processed normally
+	testProcessor.SetNextStatus(StatusApproved)
+	lowValueInvoice, err := NewInvoiceWithProcessor("test-account-id", "Low value invoice", "credit_card", 9999.99, "1234", testProcessor)
+	if err != nil {
+		t.Fatalf("failed to create low value invoice: %v", err)
+	}
+
+	err = lowValueInvoice.Process()
+	if err != nil {
+		t.Errorf("failed to process low value invoice: %v", err)
+	}
+
+	// Status should be processed for amount < 10000
+	if lowValueInvoice.Status != StatusApproved {
+		t.Errorf("expected status to be processed for amount < 10000, got %s", lowValueInvoice.Status)
+	}
+}
+
 func TestInvoice_Process_WithSeedProcessor(t *testing.T) {
 	// Test with processor using specific seed for deterministic behavior
 	seed := int64(12345)

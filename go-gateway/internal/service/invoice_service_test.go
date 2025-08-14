@@ -140,6 +140,68 @@ func TestInvoiceService_Create(t *testing.T) {
 		}
 	})
 
+	// Test with high value invoice that should stay pending
+	t.Run("high value invoice stays pending", func(t *testing.T) {
+		// Create a test processor that always approves
+		testProcessor := domain.NewTestInvoiceProcessor()
+		testProcessor.SetNextStatus(domain.StatusApproved)
+		svc.SetProcessor(testProcessor)
+
+		input := InvoiceCreateInput{
+			APIKey:         testAPIKey,
+			AccountID:      testAccountID,
+			Amount:         15000.00, // Amount > 10000
+			Description:    "High value invoice",
+			PaymentType:    "credit_card",
+			CardLastDigits: "9999",
+		}
+
+		output, err := svc.Create(context.Background(), input)
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+			return
+		}
+
+		if output.ID == "" {
+			t.Error("expected invoice ID to be set")
+		}
+		// High value invoices should stay pending regardless of processor setting
+		if output.Status != "pending" {
+			t.Errorf("expected status 'pending' for high value invoice, got '%s'", output.Status)
+		}
+	})
+
+	// Test with exact value invoice (10000) that should be processed
+	t.Run("exact value invoice gets processed", func(t *testing.T) {
+		// Create a test processor that always rejects
+		testProcessor := domain.NewTestInvoiceProcessor()
+		testProcessor.SetNextStatus(domain.StatusRejected)
+		svc.SetProcessor(testProcessor)
+
+		input := InvoiceCreateInput{
+			APIKey:         testAPIKey,
+			AccountID:      testAccountID,
+			Amount:         10000.00, // Amount = 10000
+			Description:    "Exact value invoice",
+			PaymentType:    "credit_card",
+			CardLastDigits: "8888",
+		}
+
+		output, err := svc.Create(context.Background(), input)
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+			return
+		}
+
+		if output.ID == "" {
+			t.Error("expected invoice ID to be set")
+		}
+		// Exact value invoices should be processed normally
+		if output.Status != "rejected" {
+			t.Errorf("expected status 'rejected' for exact value invoice, got '%s'", output.Status)
+		}
+	})
+
 	// Test validation errors
 	t.Run("validation errors", func(t *testing.T) {
 		// Reset processor to default for validation tests

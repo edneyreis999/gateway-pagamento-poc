@@ -69,6 +69,11 @@ func (p *TestInvoiceProcessor) ProcessInvoice(invoice *Invoice) error {
 		return errors.New("invoice: can only process pending invoices")
 	}
 
+	// Apply the same business rule: invoices with amount > 10000 stay pending
+	if invoice.Amount > 10000 {
+		return nil
+	}
+
 	invoice.Status = p.nextStatus
 	invoice.UpdatedAt = time.Now().UTC()
 
