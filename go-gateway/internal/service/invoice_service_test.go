@@ -534,3 +534,244 @@ func TestInvoiceService_UpdateStatus(t *testing.T) {
 		t.Errorf("expected ErrInvoiceNotFound, got %v", err)
 	}
 }
+
+func TestInvoiceService_GetAccountByAPIKey(t *testing.T) {
+	repo := memory.NewInvoiceRepositoryMemory()
+	mockAccountSvc := newMockAccountService()
+
+	// Add a test account
+	testAPIKey := "test-api-key-123"
+	testAccountID := "test-account-id"
+	mockAccountSvc.addTestAccount(testAPIKey, testAccountID)
+
+	svc := NewInvoiceServiceWithAccountService(nil, mockAccountSvc)
+	svc.repo = repo
+
+	// Test successful retrieval
+	account, err := svc.GetAccountByAPIKey(context.Background(), testAPIKey)
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+
+	if account.ID != testAccountID {
+		t.Errorf("expected account ID %s, got %s", testAccountID, account.ID)
+	}
+
+	if account.APIKey != testAPIKey {
+		t.Errorf("expected API key %s, got %s", testAPIKey, account.APIKey)
+	}
+
+	// Test non-existent API key
+	_, err = svc.GetAccountByAPIKey(context.Background(), "non-existent-key")
+	if err != domain.ErrAccountNotFound {
+		t.Errorf("expected ErrAccountNotFound, got %v", err)
+	}
+}
+
+func TestInvoiceService_GetByID_NotFound(t *testing.T) {
+	repo := memory.NewInvoiceRepositoryMemory()
+	mockAccountSvc := newMockAccountService()
+
+	svc := NewInvoiceServiceWithAccountService(nil, mockAccountSvc)
+	svc.repo = repo
+
+	// Test getting non-existent invoice
+	_, err := svc.GetByID(context.Background(), "non-existent-id")
+	if err != domain.ErrInvoiceNotFound {
+		t.Errorf("expected ErrInvoiceNotFound, got %v", err)
+	}
+}
+
+func TestInvoiceService_GetByID_Success(t *testing.T) {
+	repo := memory.NewInvoiceRepositoryMemory()
+	mockAccountSvc := newMockAccountService()
+
+	// Add a test account
+	testAPIKey := "test-api-key-123"
+	testAccountID := "test-account-id"
+	mockAccountSvc.addTestAccount(testAPIKey, testAccountID)
+
+	svc := NewInvoiceServiceWithAccountService(nil, mockAccountSvc)
+	svc.repo = repo
+
+	// Create a test invoice first
+	testProcessor := domain.NewTestInvoiceProcessor()
+	testProcessor.SetNextStatus(domain.StatusApproved)
+	svc.SetProcessor(testProcessor)
+
+	input := InvoiceCreateInput{
+		APIKey:         testAPIKey,
+		Amount:         100.50,
+		Description:    "Test invoice",
+		PaymentType:    "credit_card",
+		CardLastDigits: "1234",
+	}
+
+	created, err := svc.Create(context.Background(), input)
+	if err != nil {
+		t.Fatalf("failed to create test invoice: %v", err)
+	}
+
+	// Test getting the created invoice
+	retrieved, err := svc.GetByID(context.Background(), created.ID)
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+
+	if retrieved.ID != created.ID {
+		t.Errorf("expected invoice ID %s, got %s", created.ID, retrieved.ID)
+	}
+
+	if retrieved.Amount != created.Amount {
+		t.Errorf("expected amount %f, got %f", created.Amount, retrieved.Amount)
+	}
+
+	if retrieved.Status != created.Status {
+		t.Errorf("expected status %s, got %s", created.Status, retrieved.Status)
+	}
+}
+
+func TestInvoiceService_Create_AccountNotFound(t *testing.T) {
+	repo := memory.NewInvoiceRepositoryMemory()
+	mockAccountSvc := newMockAccountService()
+
+	svc := NewInvoiceServiceWithAccountService(nil, mockAccountSvc)
+	svc.repo = repo
+
+	input := InvoiceCreateInput{
+		APIKey:         "non-existent-api-key",
+		Amount:         100.50,
+		Description:    "Test invoice",
+		PaymentType:    "credit_card",
+		CardLastDigits: "1234",
+	}
+
+	_, err := svc.Create(context.Background(), input)
+	if err != domain.ErrAccountNotFound {
+		t.Errorf("expected ErrAccountNotFound, got %v", err)
+	}
+}
+
+func TestInvoiceService_Create_InvalidInput(t *testing.T) {
+	repo := memory.NewInvoiceRepositoryMemory()
+	mockAccountSvc := newMockAccountService()
+
+	// Add a test account
+	testAPIKey := "test-api-key-123"
+	testAccountID := "test-account-id"
+	mockAccountSvc.addTestAccount(testAPIKey, testAccountID)
+
+	svc := NewInvoiceServiceWithAccountService(nil, mockAccountSvc)
+	svc.repo = repo
+
+	// Test with negative amount
+	input1 := InvoiceCreateInput{
+		APIKey:         testAPIKey,
+		Amount:         -100.50,
+		Description:    "Test invoice",
+		PaymentType:    "credit_card",
+		CardLastDigits: "1234",
+	}
+
+	_, err := svc.Create(context.Background(), input1)
+	if err != domain.ErrInvoiceNegativeValue {
+		t.Errorf("expected ErrInvoiceNegativeValue, got %v", err)
+	}
+
+	// Test with zero amount
+	input2 := InvoiceCreateInput{
+		APIKey:         testAPIKey,
+		Amount:         0.0,
+		Description:    "Test invoice",
+		PaymentType:    "credit_card",
+		CardLastDigits: "1234",
+	}
+
+	_, err = svc.Create(context.Background(), input2)
+	if err != domain.ErrInvoiceNegativeValue {
+		t.Errorf("expected ErrInvoiceNegativeValue, got %v", err)
+	}
+
+	// Test with short description
+	input3 := InvoiceCreateInput{
+		APIKey:         testAPIKey,
+		Amount:         100.50,
+		Description:    "ab",
+		PaymentType:    "credit_card",
+		CardLastDigits: "1234",
+	}
+
+	_, err = svc.Create(context.Background(), input3)
+	if err != domain.ErrInvalidDescription {
+		t.Errorf("expected ErrInvalidDescription, got %v", err)
+	}
+
+	// Test with empty payment type
+	input4 := InvoiceCreateInput{
+		APIKey:         testAPIKey,
+		Amount:         100.50,
+		Description:    "Test invoice",
+		PaymentType:    "",
+		CardLastDigits: "1234",
+	}
+
+	_, err = svc.Create(context.Background(), input4)
+	if err != domain.ErrInvalidPaymentType {
+		t.Errorf("expected ErrInvalidPaymentType, got %v", err)
+	}
+}
+
+func TestInvoiceService_Create_RepositoryError(t *testing.T) {
+	// Create a mock repository that always returns an error
+	mockRepo := &mockInvoiceRepository{
+		createError: domain.ErrInvoiceNotFound, // Use any domain error
+	}
+	mockAccountSvc := newMockAccountService()
+
+	// Add a test account
+	testAPIKey := "test-api-key-123"
+	testAccountID := "test-account-id"
+	mockAccountSvc.addTestAccount(testAPIKey, testAccountID)
+
+	svc := NewInvoiceServiceWithAccountService(nil, mockAccountSvc)
+	svc.repo = mockRepo // Override the repo to use our mock
+
+	// Create a test invoice with controlled processor
+	testProcessor := domain.NewTestInvoiceProcessor()
+	testProcessor.SetNextStatus(domain.StatusApproved)
+	svc.SetProcessor(testProcessor)
+
+	input := InvoiceCreateInput{
+		APIKey:         testAPIKey,
+		Amount:         100.50,
+		Description:    "Test invoice",
+		PaymentType:    "credit_card",
+		CardLastDigits: "1234",
+	}
+
+	_, err := svc.Create(context.Background(), input)
+	if err != domain.ErrInvoiceNotFound {
+		t.Errorf("expected ErrInvoiceNotFound, got %v", err)
+	}
+}
+
+// Mock repository for testing repository errors
+type mockInvoiceRepository struct {
+	createError error
+}
+
+func (m *mockInvoiceRepository) Create(ctx context.Context, invoice *domain.Invoice) error {
+	return m.createError
+}
+
+func (m *mockInvoiceRepository) GetByID(ctx context.Context, id string) (*domain.Invoice, error) {
+	return nil, domain.ErrInvoiceNotFound
+}
+
+func (m *mockInvoiceRepository) GetByAccountID(ctx context.Context, accountID string) ([]*domain.Invoice, error) {
+	return nil, nil
+}
+
+func (m *mockInvoiceRepository) UpdateStatus(ctx context.Context, id string, status domain.Status) error {
+	return domain.ErrInvoiceNotFound
+}
