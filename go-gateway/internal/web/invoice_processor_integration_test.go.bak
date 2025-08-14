@@ -1,0 +1,667 @@
+package web
+
+import (
+	"bytes"
+	"database/sql"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"regexp"
+	"testing"
+	"time"
+
+	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/devfullcycle/imersao22/go-gateway/internal/domain"
+	"github.com/devfullcycle/imersao22/go-gateway/internal/service"
+	"github.com/devfullcycle/imersao22/go-gateway/internal/web/handlers"
+	"github.com/go-chi/chi/v5"
+)
+
+// ============================================================================
+// TESTES DE PROCESSAMENTO DETERMINÍSTICO
+// ============================================================================
+
+// Test simple processor functionality
+func TestInvoice_SimpleProcessor(t *testing.T) {
+	processor := domain.NewTestInvoiceProcessor()
+	processor.SetNextStatus(domain.StatusApproved)
+
+	// Create a test invoice
+	invoice, err := domain.NewInvoiceWithProcessor("test-account", "Test invoice", "credit_card", 1000.0, "1234", processor)
+	if err != nil {
+		t.Fatalf("failed to create invoice: %v", err)
+	}
+
+	// Process the invoice
+	if err := invoice.Process(); err != nil {
+		t.Fatalf("failed to process invoice: %v", err)
+	}
+
+	// Verify the status
+	if invoice.Status != domain.StatusApproved {
+		t.Errorf("expected status 'approved', got: %s", invoice.Status)
+	}
+}
+
+func TestInvoice_Processing_DeterministicWithSeed(t *testing.T) {
+	ts, mock, db := newTestServerWithProcessor(t, func() domain.InvoiceProcessor {
+		processor := domain.NewTestInvoiceProcessor()
+		processor.SetNextStatus(domain.StatusApproved)
+		return processor
+	})
+	defer ts.Close()
+	defer db.Close()
+
+	// Create account
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO accounts (id, name, email, api_key, balance, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7)")).
+		WithArgs(sqlmock.AnyArg(), "John Doe", "john@example.com", sqlmock.AnyArg(), 0.0, sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	accountBody := bytes.NewBufferString(`{"name":"John Doe","email":"john@example.com"}`)
+	accountResp, err := http.Post(ts.URL+"/accounts", "application/json", accountBody)
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+	if accountResp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201 got %d", accountResp.StatusCode)
+	}
+	var accountCreated map[string]any
+	_ = json.NewDecoder(accountResp.Body).Decode(&accountCreated)
+	accountResp.Body.Close()
+	accountID, _ := accountCreated["id"].(string)
+	apiKey, _ := accountCreated["api_key"].(string)
+	if accountID == "" || apiKey == "" {
+		t.Fatalf("expected id and api_key in response")
+	}
+
+	// Mock GetByAPIKey call for invoice creation (PRIMEIRA chamada)
+	now := time.Now().UTC()
+	accountRows := sqlmock.NewRows([]string{"id", "name", "email", "api_key", "balance", "created_at", "updated_at"}).
+		AddRow(accountID, "John Doe", "john@example.com", apiKey, 0.0, now, now)
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, name, email, api_key, balance, created_at, updated_at FROM accounts WHERE api_key = $1")).
+		WithArgs(apiKey).WillReturnRows(accountRows)
+
+	// Mock invoice creation
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO invoices (id, account_id, amount, status, description, payment_type, card_last_digits, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)")).
+		WithArgs(sqlmock.AnyArg(), accountID, 1000.00, "approved", "Deterministic invoice", "credit_card", "1234", sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	// Mock GetByAPIKey call for UpdateBalance (SEGUNDA chamada)
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, name, email, api_key, balance, created_at, updated_at FROM accounts WHERE api_key = $1")).
+		WithArgs(apiKey).WillReturnRows(accountRows)
+
+	// Mock lock da transação (SELECT ... FOR UPDATE)
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id FROM accounts WHERE id = $1 FOR UPDATE")).
+		WithArgs(accountID).WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(accountID))
+
+	// Mock balance update
+	mock.ExpectExec(regexp.QuoteMeta("UPDATE accounts SET balance = $1, updated_at = $2 WHERE id = $3")).
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), accountID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	// Create invoice
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/invoices", bytes.NewBufferString(`{"amount":1000.00,"description":"Deterministic invoice","payment_type":"credit_card","card_last_digits":"1234"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-API-KEY", apiKey)
+
+	client := &http.Client{}
+	invoiceResp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("create invoice: %v", err)
+	}
+	if invoiceResp.StatusCode != http.StatusCreated {
+		// Log the response body to see what error occurred
+		var errorResp map[string]any
+		_ = json.NewDecoder(invoiceResp.Body).Decode(&errorResp)
+		t.Fatalf("expected 201 got %d, error: %v", invoiceResp.StatusCode, errorResp)
+	}
+	var invoiceCreated map[string]any
+	_ = json.NewDecoder(invoiceResp.Body).Decode(&invoiceCreated)
+	invoiceResp.Body.Close()
+
+	// Verify that invoice was processed (not pending)
+	invoiceStatus, _ := invoiceCreated["status"].(string)
+	if invoiceStatus == "pending" {
+		t.Errorf("expected invoice status to not be pending after processing, got: %s", invoiceStatus)
+	}
+	if invoiceStatus != "approved" && invoiceStatus != "rejected" {
+		t.Errorf("expected invoice status to be either 'approved' or 'rejected', got: %s", invoiceStatus)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
+// ============================================================================
+// TESTES DE MÚLTIPLOS INVOICES APROVADOS
+// ============================================================================
+
+func TestInvoice_MultipleApproved_UpdateBalanceCorrectly(t *testing.T) {
+	ts, mock, db := newTestServerWithProcessor(t, func() domain.InvoiceProcessor {
+		processor := domain.NewTestInvoiceProcessor()
+		processor.SetNextStatus(domain.StatusApproved)
+		return processor
+	})
+	defer ts.Close()
+	defer db.Close()
+
+	// Create account
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO accounts (id, name, email, api_key, balance, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7)")).
+		WithArgs(sqlmock.AnyArg(), "John Doe", "john@example.com", sqlmock.AnyArg(), 0.0, sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	accountBody := bytes.NewBufferString(`{"name":"John Doe","email":"john@example.com"}`)
+	accountResp, err := http.Post(ts.URL+"/accounts", "application/json", accountBody)
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+	if accountResp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201 got %d", accountResp.StatusCode)
+	}
+	var accountCreated map[string]any
+	_ = json.NewDecoder(accountResp.Body).Decode(&accountCreated)
+	accountResp.Body.Close()
+	accountID, _ := accountCreated["id"].(string)
+	apiKey, _ := accountCreated["api_key"].(string)
+	if accountID == "" || apiKey == "" {
+		t.Fatalf("expected id and api_key in response")
+	}
+
+	// Mock GetByAPIKey call for first invoice
+	now := time.Now().UTC()
+	accountRows := sqlmock.NewRows([]string{"id", "name", "email", "api_key", "balance", "created_at", "updated_at"}).
+		AddRow(accountID, "John Doe", "john@example.com", apiKey, 0.0, now, now)
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, name, email, api_key, balance, created_at, updated_at FROM accounts WHERE api_key = $1")).
+		WithArgs(apiKey).WillReturnRows(accountRows)
+
+	// Mock first invoice creation (approved)
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO invoices (id, account_id, amount, status, description, payment_type, card_last_digits, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)")).
+		WithArgs(sqlmock.AnyArg(), accountID, 1000.00, "approved", "First approved invoice", "credit_card", "1234", sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	// Mock balance update for first invoice
+	mock.ExpectExec(regexp.QuoteMeta("UPDATE accounts SET balance = $1, updated_at = $2 WHERE id = $3")).
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), accountID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	// Create first invoice
+	req1, _ := http.NewRequest(http.MethodPost, ts.URL+"/invoices", bytes.NewBufferString(`{"amount":1000.00,"description":"First approved invoice","payment_type":"credit_card","card_last_digits":"1234"}`))
+	req1.Header.Set("Content-Type", "application/json")
+	req1.Header.Set("X-API-KEY", apiKey)
+
+	client := &http.Client{}
+	invoiceResp1, err := client.Do(req1)
+	if err != nil {
+		t.Fatalf("create first invoice: %v", err)
+	}
+	if invoiceResp1.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201 got %d", invoiceResp1.StatusCode)
+	}
+	var invoiceCreated1 map[string]any
+	_ = json.NewDecoder(invoiceResp1.Body).Decode(&invoiceCreated1)
+	invoiceResp1.Body.Close()
+
+	// Verify first invoice status
+	invoiceStatus1, _ := invoiceCreated1["status"].(string)
+	if invoiceStatus1 != "approved" {
+		t.Errorf("expected first invoice status to be 'approved', got: %s", invoiceStatus1)
+	}
+
+	// Mock GetByAPIKey call for second invoice
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, name, email, api_key, balance, created_at, updated_at FROM accounts WHERE api_key = $1")).
+		WithArgs(apiKey).WillReturnRows(accountRows)
+
+	// Mock second invoice creation (approved)
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO invoices (id, account_id, amount, status, description, payment_type, card_last_digits, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)")).
+		WithArgs(sqlmock.AnyArg(), accountID, 2000.00, "approved", "Second approved invoice", "credit_card", "5678", sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	// Mock balance update for second invoice
+	mock.ExpectExec(regexp.QuoteMeta("UPDATE accounts SET balance = $1, updated_at = $2 WHERE id = $3")).
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), accountID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	// Create second invoice
+	req2, _ := http.NewRequest(http.MethodPost, ts.URL+"/invoices", bytes.NewBufferString(`{"amount":2000.00,"description":"Second approved invoice","payment_type":"credit_card","card_last_digits":"5678"}`))
+	req2.Header.Set("Content-Type", "application/json")
+	req2.Header.Set("X-API-KEY", apiKey)
+
+	invoiceResp2, err := client.Do(req2)
+	if err != nil {
+		t.Fatalf("create second invoice: %v", err)
+	}
+	if invoiceResp2.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201 got %d", invoiceResp2.StatusCode)
+	}
+	var invoiceCreated2 map[string]any
+	_ = json.NewDecoder(invoiceResp2.Body).Decode(&invoiceCreated2)
+	invoiceResp2.Body.Close()
+
+	// Verify second invoice status
+	invoiceStatus2, _ := invoiceCreated2["status"].(string)
+	if invoiceStatus2 != "approved" {
+		t.Errorf("expected second invoice status to be 'approved', got: %s", invoiceStatus2)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
+// ============================================================================
+// TESTES DE MIX DE STATUSES
+// ============================================================================
+
+func TestInvoice_MixStatuses_UpdateBalanceSelectively(t *testing.T) {
+	ts, mock, db := newTestServerWithProcessor(t, func() domain.InvoiceProcessor {
+		processor := domain.NewTestInvoiceProcessor()
+		// First call will be approved, second will be rejected
+		processor.SetNextStatus(domain.StatusApproved)
+		return processor
+	})
+	defer ts.Close()
+	defer db.Close()
+
+	// Create account
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO accounts (id, name, email, api_key, balance, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7)")).
+		WithArgs(sqlmock.AnyArg(), "John Doe", "john@example.com", sqlmock.AnyArg(), 0.0, sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	accountBody := bytes.NewBufferString(`{"name":"John Doe","email":"john@example.com"}`)
+	accountResp, err := http.Post(ts.URL+"/accounts", "application/json", accountBody)
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+	if accountResp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201 got %d", accountResp.StatusCode)
+	}
+	var accountCreated map[string]any
+	_ = json.NewDecoder(accountResp.Body).Decode(&accountCreated)
+	accountResp.Body.Close()
+	accountID, _ := accountCreated["id"].(string)
+	apiKey, _ := accountCreated["api_key"].(string)
+	if accountID == "" || apiKey == "" {
+		t.Fatalf("expected id and api_key in response")
+	}
+
+	// Mock GetByAPIKey call for high value invoice
+	now := time.Now().UTC()
+	accountRows := sqlmock.NewRows([]string{"id", "name", "email", "api_key", "balance", "created_at", "updated_at"}).
+		AddRow(accountID, "John Doe", "john@example.com", apiKey, 0.0, now, now)
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, name, email, api_key, balance, created_at, updated_at FROM accounts WHERE api_key = $1")).
+		WithArgs(apiKey).WillReturnRows(accountRows)
+
+	// Mock high value invoice creation (stays pending)
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO invoices (id, account_id, amount, status, description, payment_type, card_last_digits, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)")).
+		WithArgs(sqlmock.AnyArg(), accountID, 15000.00, "pending", "High value invoice", "credit_card", "9999", sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	// Create high value invoice
+	req1, _ := http.NewRequest(http.MethodPost, ts.URL+"/invoices", bytes.NewBufferString(`{"amount":15000.00,"description":"High value invoice","payment_type":"credit_card","card_last_digits":"9999"}`))
+	req1.Header.Set("Content-Type", "application/json")
+	req1.Header.Set("X-API-KEY", apiKey)
+
+	client := &http.Client{}
+	invoiceResp1, err := client.Do(req1)
+	if err != nil {
+		t.Fatalf("create high value invoice: %v", err)
+	}
+	if invoiceResp1.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201 got %d", invoiceResp1.StatusCode)
+	}
+	var invoiceCreated1 map[string]any
+	_ = json.NewDecoder(invoiceResp1.Body).Decode(&invoiceCreated1)
+	invoiceResp1.Body.Close()
+
+	// Verify high value invoice status
+	invoiceStatus1, _ := invoiceCreated1["status"].(string)
+	if invoiceStatus1 != "pending" {
+		t.Errorf("expected high value invoice status to be 'pending', got: %s", invoiceStatus1)
+	}
+
+	// Mock GetByAPIKey call for approved invoice
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, name, email, api_key, balance, created_at, updated_at FROM accounts WHERE api_key = $1")).
+		WithArgs(apiKey).WillReturnRows(accountRows)
+
+	// Mock approved invoice creation
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO invoices (id, account_id, amount, status, description, payment_type, card_last_digits, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)")).
+		WithArgs(sqlmock.AnyArg(), accountID, 5000.00, "approved", "Approved invoice", "credit_card", "1234", sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	// Mock balance update for approved invoice
+	mock.ExpectExec(regexp.QuoteMeta("UPDATE accounts SET balance = $1, updated_at = $2 WHERE id = $3")).
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), accountID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	// Create approved invoice
+	req2, _ := http.NewRequest(http.MethodPost, ts.URL+"/invoices", bytes.NewBufferString(`{"amount":5000.00,"description":"Approved invoice","payment_type":"credit_card","card_last_digits":"1234"}`))
+	req2.Header.Set("Content-Type", "application/json")
+	req2.Header.Set("X-API-KEY", apiKey)
+
+	invoiceResp2, err := client.Do(req2)
+	if err != nil {
+		t.Fatalf("create approved invoice: %v", err)
+	}
+	if invoiceResp2.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201 got %d", invoiceResp2.StatusCode)
+	}
+	var invoiceCreated2 map[string]any
+	_ = json.NewDecoder(invoiceResp2.Body).Decode(&invoiceCreated2)
+	invoiceResp2.Body.Close()
+
+	// Verify approved invoice status
+	invoiceStatus2, _ := invoiceCreated2["status"].(string)
+	if invoiceStatus2 != "approved" {
+		t.Errorf("expected approved invoice status to be 'approved', got: %s", invoiceStatus2)
+	}
+
+	// Mock GetByAPIKey call for rejected invoice
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, name, email, api_key, balance, created_at, updated_at FROM accounts WHERE api_key = $1")).
+		WithArgs(apiKey).WillReturnRows(accountRows)
+
+	// Mock rejected invoice creation
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO invoices (id, account_id, amount, status, description, payment_type, card_last_digits, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)")).
+		WithArgs(sqlmock.AnyArg(), accountID, 3000.00, "rejected", "Rejected invoice", "credit_card", "5678", sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	// Create rejected invoice
+	invoiceBody3 := bytes.NewBufferString(`{"amount":3000.00,"description":"Rejected invoice","payment_type":"credit_card","card_last_digits":"5678"}`)
+	req3, _ := http.NewRequest(http.MethodPost, ts.URL+"/invoices", invoiceBody3)
+	req3.Header.Set("Content-Type", "application/json")
+	req3.Header.Set("X-API-KEY", apiKey)
+
+	invoiceResp3, err := client.Do(req3)
+	if err != nil {
+		t.Fatalf("create rejected invoice: %v", err)
+	}
+	if invoiceResp3.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201 got %d", invoiceResp3.StatusCode)
+	}
+	var invoiceCreated3 map[string]any
+	_ = json.NewDecoder(invoiceResp3.Body).Decode(&invoiceCreated3)
+	invoiceResp3.Body.Close()
+
+	// Verify rejected invoice status
+	invoiceStatus3, _ := invoiceCreated3["status"].(string)
+	if invoiceStatus3 != "rejected" {
+		t.Errorf("expected rejected invoice status to be 'rejected', got: %s", invoiceStatus3)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
+// ============================================================================
+// TESTES DE FALHA NA ATUALIZAÇÃO DE SALDO
+// ============================================================================
+
+func TestInvoice_UpdateBalanceFailure_InvoiceNotCreated(t *testing.T) {
+	ts, mock, db := newTestServerWithProcessor(t, func() domain.InvoiceProcessor {
+		processor := domain.NewTestInvoiceProcessor()
+		processor.SetNextStatus(domain.StatusApproved)
+		return processor
+	})
+	defer ts.Close()
+	defer db.Close()
+
+	// Create account
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO accounts (id, name, email, api_key, balance, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7)")).
+		WithArgs(sqlmock.AnyArg(), "John Doe", "john@example.com", sqlmock.AnyArg(), 0.0, sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	accountBody := bytes.NewBufferString(`{"name":"John Doe","email":"john@example.com"}`)
+	accountResp, err := http.Post(ts.URL+"/accounts", "application/json", accountBody)
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+	if accountResp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201 got %d", accountResp.StatusCode)
+	}
+	var accountCreated map[string]any
+	_ = json.NewDecoder(accountResp.Body).Decode(&accountCreated)
+	accountResp.Body.Close()
+	accountID, _ := accountCreated["id"].(string)
+	apiKey, _ := accountCreated["api_key"].(string)
+	if accountID == "" || apiKey == "" {
+		t.Fatalf("expected id and api_key in response")
+	}
+
+	// Mock GetByAPIKey call
+	now := time.Now().UTC()
+	accountRows := sqlmock.NewRows([]string{"id", "name", "email", "api_key", "balance", "created_at", "updated_at"}).
+		AddRow(accountID, "John Doe", "john@example.com", apiKey, 0.0, now, now)
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, name, email, api_key, balance, created_at, updated_at FROM accounts WHERE api_key = $1")).
+		WithArgs(apiKey).WillReturnRows(accountRows)
+
+	// Mock invoice creation (approved)
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO invoices (id, account_id, amount, status, description, payment_type, card_last_digits, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)")).
+		WithArgs(sqlmock.AnyArg(), accountID, 5000.00, "approved", "Invoice with balance update failure", "credit_card", "1234", sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	// Mock balance update failure
+	mock.ExpectExec(regexp.QuoteMeta("UPDATE accounts SET balance = $1, updated_at = $2 WHERE id = $3")).
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), accountID).
+		WillReturnError(sql.ErrConnDone) // Simulate database connection error
+
+	// Create invoice
+	invoiceBody := bytes.NewBufferString(`{"amount":5000.00,"description":"Invoice with balance update failure","payment_type":"credit_card","card_last_digits":"1234"}`)
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/invoices", invoiceBody)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-API-KEY", apiKey)
+
+	client := &http.Client{}
+	invoiceResp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("create invoice: %v", err)
+	}
+	if invoiceResp.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("expected 500 got %d", invoiceResp.StatusCode)
+	}
+	invoiceResp.Body.Close()
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
+// ============================================================================
+// TESTES DE EDGE CASES
+// ============================================================================
+
+func TestInvoice_EdgeCase_Exact10000Amount(t *testing.T) {
+	ts, mock, db := newTestServerWithProcessor(t, func() domain.InvoiceProcessor {
+		processor := domain.NewTestInvoiceProcessor()
+		processor.SetNextStatus(domain.StatusApproved)
+		return processor
+	})
+	defer ts.Close()
+	defer db.Close()
+
+	// Create account
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO accounts (id, name, email, api_key, balance, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7)")).
+		WithArgs(sqlmock.AnyArg(), "John Doe", "john@example.com", sqlmock.AnyArg(), 0.0, sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	accountBody := bytes.NewBufferString(`{"name":"John Doe","email":"john@example.com"}`)
+	accountResp, err := http.Post(ts.URL+"/accounts", "application/json", accountBody)
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+	if accountResp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201 got %d", accountResp.StatusCode)
+	}
+	var accountCreated map[string]any
+	_ = json.NewDecoder(accountResp.Body).Decode(&accountCreated)
+	accountResp.Body.Close()
+	accountID, _ := accountCreated["id"].(string)
+	apiKey, _ := accountCreated["api_key"].(string)
+	if accountID == "" || apiKey == "" {
+		t.Fatalf("expected id and api_key in response")
+	}
+
+	// Mock GetByAPIKey call
+	now := time.Now().UTC()
+	accountRows := sqlmock.NewRows([]string{"id", "name", "email", "api_key", "balance", "created_at", "updated_at"}).
+		AddRow(accountID, "John Doe", "john@example.com", apiKey, 0.0, now, now)
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, name, email, api_key, balance, created_at, updated_at FROM accounts WHERE api_key = $1")).
+		WithArgs(apiKey).WillReturnRows(accountRows)
+
+	// Mock invoice creation (exact 10000 amount should be processed)
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO invoices (id, account_id, amount, status, description, payment_type, card_last_digits, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)")).
+		WithArgs(sqlmock.AnyArg(), accountID, 10000.00, "approved", "Exact 10000 amount invoice", "credit_card", "1234", sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	// Mock balance update (may be called if approved)
+	mock.ExpectExec(regexp.QuoteMeta("UPDATE accounts SET balance = $1, updated_at = $2 WHERE id = $3")).
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), accountID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	// Create invoice
+	invoiceBody := bytes.NewBufferString(`{"amount":10000.00,"description":"Exact 10000 amount invoice","payment_type":"credit_card","card_last_digits":"1234"}`)
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/invoices", invoiceBody)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-API-KEY", apiKey)
+
+	client := &http.Client{}
+	invoiceResp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("create invoice: %v", err)
+	}
+	if invoiceResp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201 got %d", invoiceResp.StatusCode)
+	}
+	var invoiceCreated map[string]any
+	_ = json.NewDecoder(invoiceResp.Body).Decode(&invoiceCreated)
+	invoiceResp.Body.Close()
+
+	// Verify that exact 10000 amount invoice is processed (not pending)
+	invoiceStatus, _ := invoiceCreated["status"].(string)
+	if invoiceStatus == "pending" {
+		t.Errorf("expected exact 10000 amount invoice to be processed, got status: %s", invoiceStatus)
+	}
+	if invoiceStatus != "approved" && invoiceStatus != "rejected" {
+		t.Errorf("expected invoice status to be either 'approved' or 'rejected', got: %s", invoiceStatus)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
+func TestInvoice_EdgeCase_9999Amount(t *testing.T) {
+	ts, mock, db := newTestServerWithProcessor(t, func() domain.InvoiceProcessor {
+		processor := domain.NewTestInvoiceProcessor()
+		processor.SetNextStatus(domain.StatusApproved)
+		return processor
+	})
+	defer ts.Close()
+	defer db.Close()
+
+	// Create account
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO accounts (id, name, email, api_key, balance, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7)")).
+		WithArgs(sqlmock.AnyArg(), "John Doe", "john@example.com", sqlmock.AnyArg(), 0.0, sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	accountBody := bytes.NewBufferString(`{"name":"John Doe","email":"john@example.com"}`)
+	accountResp, err := http.Post(ts.URL+"/accounts", "application/json", accountBody)
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+	if accountResp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201 got %d", accountResp.StatusCode)
+	}
+	var accountCreated map[string]any
+	_ = json.NewDecoder(accountResp.Body).Decode(&accountCreated)
+	accountResp.Body.Close()
+	accountID, _ := accountCreated["id"].(string)
+	apiKey, _ := accountCreated["api_key"].(string)
+	if accountID == "" || apiKey == "" {
+		t.Fatalf("expected id and api_key in response")
+	}
+
+	// Mock GetByAPIKey call
+	now := time.Now().UTC()
+	accountRows := sqlmock.NewRows([]string{"id", "name", "email", "api_key", "balance", "created_at", "updated_at"}).
+		AddRow(accountID, "John Doe", "john@example.com", apiKey, 0.0, now, now)
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, name, email, api_key, balance, created_at, updated_at FROM accounts WHERE api_key = $1")).
+		WithArgs(apiKey).WillReturnRows(accountRows)
+
+	// Mock invoice creation (9999 amount should be processed)
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO invoices (id, account_id, amount, status, description, payment_type, card_last_digits, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)")).
+		WithArgs(sqlmock.AnyArg(), accountID, 9999.99, "approved", "9999.99 amount invoice", "credit_card", "1234", sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	// Mock balance update (may be called if approved)
+	mock.ExpectExec(regexp.QuoteMeta("UPDATE accounts SET balance = $1, updated_at = $2 WHERE id = $3")).
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), accountID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	// Create invoice
+	invoiceBody := bytes.NewBufferString(`{"amount":9999.99,"description":"9999.99 amount invoice","payment_type":"credit_card","card_last_digits":"1234"}`)
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/invoices", invoiceBody)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-API-KEY", apiKey)
+
+	client := &http.Client{}
+	invoiceResp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("create invoice: %v", err)
+	}
+	if invoiceResp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201 got %d", invoiceResp.StatusCode)
+	}
+	var invoiceCreated map[string]any
+	_ = json.NewDecoder(invoiceResp.Body).Decode(&invoiceCreated)
+	invoiceResp.Body.Close()
+
+	// Verify that 9999.99 amount invoice is processed (not pending)
+	invoiceStatus, _ := invoiceCreated["status"].(string)
+	if invoiceStatus == "pending" {
+		t.Errorf("expected 9999.99 amount invoice to be processed, got status: %s", invoiceStatus)
+	}
+	if invoiceStatus != "approved" && invoiceStatus != "rejected" {
+		t.Errorf("expected invoice status to be either 'approved' or 'rejected', got: %s", invoiceStatus)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
+// ============================================================================
+// HELPER FUNCTIONS
+// ============================================================================
+
+// newTestServerWithProcessor creates a test server with a custom invoice processor
+func newTestServerWithProcessor(t *testing.T, processorFactory func() domain.InvoiceProcessor) (*httptest.Server, sqlmock.Sqlmock, *sql.DB) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+
+	// Create services with custom processor
+	accountSvc := service.NewAccountService(db)
+	invoiceSvc := service.NewInvoiceServiceWithAccountService(db, accountSvc)
+	invoiceSvc.SetProcessor(processorFactory())
+
+	// Create handlers
+	accountH := handlers.NewAccountHandler(accountSvc)
+	invoiceH := handlers.NewInvoiceHandler(invoiceSvc)
+
+	// Create router
+	r := chi.NewRouter()
+	r.Route("/accounts", func(r chi.Router) {
+		r.Post("/", accountH.PostAccounts())
+		r.Get("/", accountH.GetAccounts())
+	})
+	r.Route("/invoices", func(r chi.Router) {
+		r.Post("/", invoiceH.PostInvoices())
+		r.Get("/", invoiceH.GetInvoices())
+		r.Get("/{id}", invoiceH.GetInvoiceByID())
+	})
+
+	ts := httptest.NewServer(r)
+	return ts, mock, db
+}
