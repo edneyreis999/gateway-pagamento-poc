@@ -18,12 +18,14 @@ type AccountServicePort interface {
 type InvoiceService struct {
 	repo           domain.InvoiceRepository
 	accountService AccountServicePort
+	processor      domain.InvoiceProcessor // Custom processor for testing
 }
 
 func NewInvoiceService(db *sql.DB) *InvoiceService {
 	return &InvoiceService{
 		repo:           pg.NewPostgresInvoiceRepository(db),
 		accountService: NewAccountService(db),
+		processor:      nil, // Use default processor
 	}
 }
 
@@ -32,7 +34,13 @@ func NewInvoiceServiceWithAccountService(db *sql.DB, accountService AccountServi
 	return &InvoiceService{
 		repo:           pg.NewPostgresInvoiceRepository(db),
 		accountService: accountService,
+		processor:      nil, // Use default processor
 	}
+}
+
+// SetProcessor allows setting a custom processor for testing
+func (s *InvoiceService) SetProcessor(processor domain.InvoiceProcessor) {
+	s.processor = processor
 }
 
 // Create creates a new invoice from input DTO and returns an output DTO.
@@ -42,8 +50,22 @@ func (s *InvoiceService) Create(ctx context.Context, in InvoiceCreateInput) (*In
 		return nil, err
 	}
 
-	invoice, err := domain.NewInvoice(accountOutput.ID, in.Description, in.PaymentType, in.Amount, in.CardLastDigits)
-	if err != nil {
+	var invoice *domain.Invoice
+	var err2 error
+
+	if s.processor != nil {
+		// Use custom processor for testing
+		invoice, err2 = domain.NewInvoiceWithProcessor(accountOutput.ID, in.Description, in.PaymentType, in.Amount, in.CardLastDigits, s.processor)
+	} else {
+		// Use default processor
+		invoice, err2 = domain.NewInvoice(accountOutput.ID, in.Description, in.PaymentType, in.Amount, in.CardLastDigits)
+	}
+
+	if err2 != nil {
+		return nil, err2
+	}
+
+	if err := invoice.Process(); err != nil {
 		return nil, err
 	}
 

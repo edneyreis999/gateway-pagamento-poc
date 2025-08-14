@@ -48,8 +48,10 @@ func TestInvoice_CreateAndGet_Success(t *testing.T) {
 		WithArgs(apiKey).WillReturnRows(accountRows)
 
 	// Then mock the invoice creation
+	// Note: The status will be "approved" or "rejected" after invoice.Process() is called
+	// We'll use sqlmock.AnyArg() for the status since it's determined by the random processor
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO invoices (id, account_id, amount, status, description, payment_type, card_last_digits, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)")).
-		WithArgs(sqlmock.AnyArg(), accountID, 100.50, "pending", "Test invoice", "credit_card", "1234", sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WithArgs(sqlmock.AnyArg(), accountID, 100.50, sqlmock.AnyArg(), "Test invoice", "credit_card", "1234", sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	invoiceBody := bytes.NewBufferString(`{"api_key":"` + apiKey + `","account_id":"` + accountID + `","amount":100.50,"description":"Test invoice","payment_type":"credit_card","card_last_digits":"1234"}`)
@@ -68,10 +70,20 @@ func TestInvoice_CreateAndGet_Success(t *testing.T) {
 		t.Fatalf("expected invoice id in response")
 	}
 
+	// Verify that the invoice status is not pending (it should be approved or rejected)
+	invoiceStatus, _ := invoiceCreated["status"].(string)
+	if invoiceStatus == "pending" {
+		t.Errorf("expected invoice status to not be pending after processing, got: %s", invoiceStatus)
+	}
+	if invoiceStatus != "approved" && invoiceStatus != "rejected" {
+		t.Errorf("expected invoice status to be either 'approved' or 'rejected', got: %s", invoiceStatus)
+	}
+
 	// Now get the invoice by ID
 	now = time.Now().UTC()
+	// Use the actual status from the created invoice
 	rows := sqlmock.NewRows([]string{"id", "account_id", "amount", "status", "description", "payment_type", "card_last_digits", "created_at", "updated_at"}).
-		AddRow(invoiceID, accountID, 100.50, "pending", "Test invoice", "credit_card", "1234", now, now)
+		AddRow(invoiceID, accountID, 100.50, invoiceStatus, "Test invoice", "credit_card", "1234", now, now)
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, account_id, amount, status, description, payment_type, card_last_digits, created_at, updated_at FROM invoices WHERE id = $1")).
 		WithArgs(invoiceID).WillReturnRows(rows)
 
@@ -211,10 +223,11 @@ func TestInvoice_GetByAccountID_Success(t *testing.T) {
 	apiKey := "test-api-key"
 
 	// Mock the query to return invoices for the account
+	// Note: Invoices will have status "approved" or "rejected" after processing, not "pending"
 	now := time.Now().UTC()
 	rows := sqlmock.NewRows([]string{"id", "account_id", "amount", "status", "description", "payment_type", "card_last_digits", "created_at", "updated_at"}).
-		AddRow("inv-1", accountID, 100.00, "pending", "Invoice 1", "credit_card", "1234", now, now).
-		AddRow("inv-2", accountID, 200.00, "approved", "Invoice 2", "debit_card", "5678", now, now)
+		AddRow("inv-1", accountID, 100.00, "approved", "Invoice 1", "credit_card", "1234", now, now).
+		AddRow("inv-2", accountID, 200.00, "rejected", "Invoice 2", "debit_card", "5678", now, now)
 
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, account_id, amount, status, description, payment_type, card_last_digits, created_at, updated_at FROM invoices WHERE account_id = $1 ORDER BY created_at DESC")).
 		WithArgs(accountID).WillReturnRows(rows)

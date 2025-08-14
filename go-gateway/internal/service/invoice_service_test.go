@@ -63,119 +63,191 @@ func TestInvoiceService_Create(t *testing.T) {
 	svc := NewInvoiceServiceWithAccountService(nil, mockAccountSvc)
 	svc.repo = repo // Override the repo to use memory instead of postgres
 
-	tests := []struct {
-		name          string
-		input         InvoiceCreateInput
-		expectedError bool
-	}{
-		{
-			name: "valid invoice",
-			input: InvoiceCreateInput{
-				APIKey:         testAPIKey,
-				AccountID:      testAccountID,
-				Amount:         100.50,
-				Description:    "Test invoice",
-				PaymentType:    "credit_card",
-				CardLastDigits: "1234",
-			},
-			expectedError: false,
-		},
-		{
-			name: "invalid description too short",
-			input: InvoiceCreateInput{
-				APIKey:      testAPIKey,
-				AccountID:   testAccountID,
-				Amount:      100.50,
-				Description: "Te",
-				PaymentType: "credit_card",
-			},
-			expectedError: true,
-		},
-		{
-			name: "invalid payment type empty",
-			input: InvoiceCreateInput{
-				APIKey:      testAPIKey,
-				AccountID:   testAccountID,
-				Amount:      100.50,
-				Description: "Test invoice",
-				PaymentType: "",
-			},
-			expectedError: true,
-		},
-		{
-			name: "invalid amount negative",
-			input: InvoiceCreateInput{
-				APIKey:      testAPIKey,
-				AccountID:   testAccountID,
-				Amount:      -50.00,
-				Description: "Test invoice",
-				PaymentType: "credit_card",
-			},
-			expectedError: true,
-		},
-		{
-			name: "invalid amount zero",
-			input: InvoiceCreateInput{
-				APIKey:      testAPIKey,
-				AccountID:   testAccountID,
-				Amount:      0.00,
-				Description: "Test invoice",
-				PaymentType: "credit_card",
-			},
-			expectedError: true,
-		},
-		{
-			name: "invalid API key",
-			input: InvoiceCreateInput{
-				APIKey:      "invalid-api-key",
-				AccountID:   testAccountID,
-				Amount:      100.50,
-				Description: "Test invoice",
-				PaymentType: "credit_card",
-			},
-			expectedError: true,
-		},
-	}
+	// Test with controlled processor for approval
+	t.Run("valid invoice with approval", func(t *testing.T) {
+		// Create a test processor that always approves
+		testProcessor := domain.NewTestInvoiceProcessor()
+		testProcessor.SetNextStatus(domain.StatusApproved)
+		svc.SetProcessor(testProcessor)
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			output, err := svc.Create(context.Background(), tt.input)
+		input := InvoiceCreateInput{
+			APIKey:         testAPIKey,
+			AccountID:      testAccountID,
+			Amount:         100.50,
+			Description:    "Test invoice",
+			PaymentType:    "credit_card",
+			CardLastDigits: "1234",
+		}
 
-			if tt.expectedError {
-				if err == nil {
-					t.Error("expected error but got none")
+		output, err := svc.Create(context.Background(), input)
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+			return
+		}
+
+		if output.ID == "" {
+			t.Error("expected invoice ID to be set")
+		}
+		if output.AccountID != testAccountID {
+			t.Errorf("expected account ID %s, got %s", testAccountID, output.AccountID)
+		}
+		if output.Amount != input.Amount {
+			t.Errorf("expected amount %f, got %f", input.Amount, output.Amount)
+		}
+		// After processing, status should be approved, not pending
+		if output.Status != "approved" {
+			t.Errorf("expected status 'approved', got '%s'", output.Status)
+		}
+		if output.Description != input.Description {
+			t.Errorf("expected description %s, got %s", input.Description, output.Description)
+		}
+		if output.PaymentType != input.PaymentType {
+			t.Errorf("expected payment type %s, got %s", input.PaymentType, output.PaymentType)
+		}
+		if output.CardLastDigits != input.CardLastDigits {
+			t.Errorf("expected card last digits %s, got %s", input.CardLastDigits, output.CardLastDigits)
+		}
+	})
+
+	// Test with controlled processor for rejection
+	t.Run("valid invoice with rejection", func(t *testing.T) {
+		// Create a test processor that always rejects
+		testProcessor := domain.NewTestInvoiceProcessor()
+		testProcessor.SetNextStatus(domain.StatusRejected)
+		svc.SetProcessor(testProcessor)
+
+		input := InvoiceCreateInput{
+			APIKey:         testAPIKey,
+			AccountID:      testAccountID,
+			Amount:         200.00,
+			Description:    "Test invoice 2",
+			PaymentType:    "debit_card",
+			CardLastDigits: "5678",
+		}
+
+		output, err := svc.Create(context.Background(), input)
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+			return
+		}
+
+		if output.ID == "" {
+			t.Error("expected invoice ID to be set")
+		}
+		// After processing, status should be rejected, not pending
+		if output.Status != "rejected" {
+			t.Errorf("expected status 'rejected', got '%s'", output.Status)
+		}
+	})
+
+	// Test validation errors
+	t.Run("validation errors", func(t *testing.T) {
+		// Reset processor to default for validation tests
+		svc.SetProcessor(nil)
+
+		tests := []struct {
+			name          string
+			input         InvoiceCreateInput
+			expectedError bool
+		}{
+			{
+				name: "invalid description too short",
+				input: InvoiceCreateInput{
+					APIKey:      testAPIKey,
+					AccountID:   testAccountID,
+					Amount:      100.50,
+					Description: "Te",
+					PaymentType: "credit_card",
+				},
+				expectedError: true,
+			},
+			{
+				name: "invalid payment type empty",
+				input: InvoiceCreateInput{
+					APIKey:      testAPIKey,
+					AccountID:   testAccountID,
+					Amount:      100.50,
+					Description: "Test invoice",
+					PaymentType: "",
+				},
+				expectedError: true,
+			},
+			{
+				name: "invalid amount negative",
+				input: InvoiceCreateInput{
+					APIKey:      testAPIKey,
+					AccountID:   testAccountID,
+					Amount:      -50.00,
+					Description: "Test invoice",
+					PaymentType: "credit_card",
+				},
+				expectedError: true,
+			},
+			{
+				name: "invalid amount zero",
+				input: InvoiceCreateInput{
+					APIKey:      testAPIKey,
+					AccountID:   testAccountID,
+					Amount:      0.00,
+					Description: "Test invoice",
+					PaymentType: "credit_card",
+				},
+				expectedError: true,
+			},
+			{
+				name: "invalid API key",
+				input: InvoiceCreateInput{
+					APIKey:      "invalid-api-key",
+					AccountID:   testAccountID,
+					Amount:      100.50,
+					Description: "Test invoice",
+					PaymentType: "credit_card",
+				},
+				expectedError: true,
+			},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				output, err := svc.Create(context.Background(), tt.input)
+
+				if tt.expectedError {
+					if err == nil {
+						t.Error("expected error but got none")
+					}
+					return
 				}
-				return
-			}
 
-			if err != nil {
-				t.Errorf("unexpected error: %v", err)
-				return
-			}
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+					return
+				}
 
-			if output.ID == "" {
-				t.Error("expected invoice ID to be set")
-			}
-			if output.AccountID != testAccountID {
-				t.Errorf("expected account ID %s, got %s", testAccountID, output.AccountID)
-			}
-			if output.Amount != tt.input.Amount {
-				t.Errorf("expected amount %f, got %f", tt.input.Amount, output.Amount)
-			}
-			if output.Status != "pending" {
-				t.Errorf("expected status 'pending', got '%s'", output.Status)
-			}
-			if output.Description != tt.input.Description {
-				t.Errorf("expected description %s, got %s", tt.input.Description, output.Description)
-			}
-			if output.PaymentType != tt.input.PaymentType {
-				t.Errorf("expected payment type %s, got %s", tt.input.PaymentType, output.PaymentType)
-			}
-			if output.CardLastDigits != tt.input.CardLastDigits {
-				t.Errorf("expected card last digits %s, got %s", tt.input.CardLastDigits, output.CardLastDigits)
-			}
-		})
-	}
+				if output.ID == "" {
+					t.Error("expected invoice ID to be set")
+				}
+				if output.AccountID != testAccountID {
+					t.Errorf("expected account ID %s, got %s", testAccountID, output.AccountID)
+				}
+				if output.Amount != tt.input.Amount {
+					t.Errorf("expected amount %f, got %f", tt.input.Amount, output.Amount)
+				}
+				// After processing, status should not be pending
+				if output.Status == "pending" {
+					t.Error("expected status to not be pending after processing")
+				}
+				if output.Description != tt.input.Description {
+					t.Errorf("expected description %s, got %s", tt.input.Description, output.Description)
+				}
+				if output.PaymentType != tt.input.PaymentType {
+					t.Errorf("expected payment type %s, got %s", tt.input.PaymentType, output.PaymentType)
+				}
+				if output.CardLastDigits != tt.input.CardLastDigits {
+					t.Errorf("expected card last digits %s, got %s", tt.input.CardLastDigits, output.CardLastDigits)
+				}
+			})
+		}
+	})
 }
 
 func TestInvoiceService_GetByID(t *testing.T) {
@@ -190,7 +262,11 @@ func TestInvoiceService_GetByID(t *testing.T) {
 	svc := NewInvoiceServiceWithAccountService(nil, mockAccountSvc)
 	svc.repo = repo // Override the repo to use memory instead of postgres
 
-	// Create a test invoice first
+	// Create a test invoice first with controlled processor
+	testProcessor := domain.NewTestInvoiceProcessor()
+	testProcessor.SetNextStatus(domain.StatusApproved)
+	svc.SetProcessor(testProcessor)
+
 	input := InvoiceCreateInput{
 		APIKey:         testAPIKey,
 		AccountID:      testAccountID,
@@ -203,6 +279,11 @@ func TestInvoiceService_GetByID(t *testing.T) {
 	created, err := svc.Create(context.Background(), input)
 	if err != nil {
 		t.Fatalf("failed to create test invoice: %v", err)
+	}
+
+	// Verify that the invoice was processed and is not pending
+	if created.Status == "pending" {
+		t.Error("expected invoice to not be pending after processing")
 	}
 
 	// Test getting by ID
@@ -237,7 +318,7 @@ func TestInvoiceService_GetByAccountID(t *testing.T) {
 	svc := NewInvoiceServiceWithAccountService(nil, mockAccountSvc)
 	svc.repo = repo // Override the repo to use memory instead of postgres
 
-	// Create test invoices for different accounts
+	// Create test invoices for different accounts with controlled processors
 	inputs := []InvoiceCreateInput{
 		{
 			APIKey:      testAPIKey1,
@@ -262,10 +343,18 @@ func TestInvoiceService_GetByAccountID(t *testing.T) {
 		},
 	}
 
-	for _, input := range inputs {
+	// Create invoices with different statuses for testing
+	statuses := []domain.Status{domain.StatusApproved, domain.StatusRejected, domain.StatusApproved}
+
+	for i, input := range inputs {
+		// Set processor for this specific invoice
+		testProcessor := domain.NewTestInvoiceProcessor()
+		testProcessor.SetNextStatus(statuses[i])
+		svc.SetProcessor(testProcessor)
+
 		_, err := svc.Create(context.Background(), input)
 		if err != nil {
-			t.Fatalf("failed to create test invoice: %v", err)
+			t.Fatalf("failed to create test invoice %d: %v", i, err)
 		}
 	}
 
@@ -279,6 +368,13 @@ func TestInvoiceService_GetByAccountID(t *testing.T) {
 		t.Errorf("expected 2 invoices for account-1, got %d", len(invoices))
 	}
 
+	// Verify that invoices are not pending
+	for i, invoice := range invoices {
+		if invoice.Status == "pending" {
+			t.Errorf("invoice %d should not be pending after processing, got status: %s", i, invoice.Status)
+		}
+	}
+
 	// Test getting invoices for account-2
 	invoices, err = svc.GetByAccountID(context.Background(), "account-2")
 	if err != nil {
@@ -287,6 +383,11 @@ func TestInvoiceService_GetByAccountID(t *testing.T) {
 
 	if len(invoices) != 1 {
 		t.Errorf("expected 1 invoice for account-2, got %d", len(invoices))
+	}
+
+	// Verify that invoice is not pending
+	if invoices[0].Status == "pending" {
+		t.Errorf("invoice should not be pending after processing, got status: %s", invoices[0].Status)
 	}
 
 	// Test getting invoices for non-existent account
@@ -312,7 +413,11 @@ func TestInvoiceService_UpdateStatus(t *testing.T) {
 	svc := NewInvoiceServiceWithAccountService(nil, mockAccountSvc)
 	svc.repo = repo // Override the repo to use memory instead of postgres
 
-	// Create a test invoice first
+	// Create a test invoice first with controlled processor
+	testProcessor := domain.NewTestInvoiceProcessor()
+	testProcessor.SetNextStatus(domain.StatusRejected) // Start with rejected
+	svc.SetProcessor(testProcessor)
+
 	input := InvoiceCreateInput{
 		APIKey:         testAPIKey,
 		AccountID:      testAccountID,
@@ -325,6 +430,11 @@ func TestInvoiceService_UpdateStatus(t *testing.T) {
 	created, err := svc.Create(context.Background(), input)
 	if err != nil {
 		t.Fatalf("failed to create test invoice: %v", err)
+	}
+
+	// Verify that the invoice was processed and is not pending
+	if created.Status == "pending" {
+		t.Error("expected invoice to not be pending after processing")
 	}
 
 	// Test updating status to approved

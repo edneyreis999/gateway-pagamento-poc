@@ -101,6 +101,10 @@ func NewDefaultInvoiceProcessorWithSeed(seed int64) *DefaultInvoiceProcessor {
 
 // ProcessInvoice processes an invoice using random logic (70% approved, 30% rejected)
 func (p *DefaultInvoiceProcessor) ProcessInvoice(invoice *Invoice) error {
+	if invoice.Amount > 10000 {
+		return nil
+	}
+
 	if invoice.Status != StatusPending {
 		return errors.New("invoice: can only process pending invoices")
 	}
