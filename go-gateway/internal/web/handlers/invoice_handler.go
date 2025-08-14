@@ -17,6 +17,7 @@ type InvoiceServicePort interface {
 	Create(ctx context.Context, in service.InvoiceCreateInput) (*service.InvoiceOutput, error)
 	GetByID(ctx context.Context, id string) (*service.InvoiceOutput, error)
 	GetByAccountID(ctx context.Context, accountID string) ([]*service.InvoiceOutput, error)
+	GetAccountByAPIKey(ctx context.Context, apiKey string) (*service.AccountOutput, error)
 }
 
 // InvoiceHandler handles HTTP requests for invoices.
@@ -45,7 +46,7 @@ func (h *InvoiceHandler) GetInvoiceByID() http.HandlerFunc {
 
 // RegisterRoutes registers the HTTP handlers on a mux.
 func (h *InvoiceHandler) RegisterRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("/invoices", h.handleInvoices)
+	mux.HandleFunc("/invoice", h.handleInvoices)
 	mux.HandleFunc("/invoices/", h.handleInvoiceByID)
 }
 
@@ -62,16 +63,19 @@ func (h *InvoiceHandler) handleInvoices(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 
-		// For now, we'll get invoices by account ID from query param
-		// In a real implementation, you'd get the account from the API key first
-		accountID := r.URL.Query().Get("account_id")
-		if accountID == "" {
-			w.WriteHeader(http.StatusBadRequest)
-			_ = json.NewEncoder(w).Encode(map[string]string{"error": "account_id query parameter is required"})
+		// Get account from API key and then get invoices for that account
+		accountOutput, err := h.svc.GetAccountByAPIKey(r.Context(), apiKey)
+		if err != nil {
+			status := http.StatusInternalServerError
+			if errors.Is(err, domain.ErrAccountNotFound) {
+				status = http.StatusNotFound
+			}
+			w.WriteHeader(status)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 			return
 		}
 
-		out, err := h.svc.GetByAccountID(r.Context(), accountID)
+		out, err := h.svc.GetByAccountID(r.Context(), accountOutput.ID)
 		if err != nil {
 			status := http.StatusInternalServerError
 			if errors.Is(err, domain.ErrInvoiceNotFound) {
@@ -139,12 +143,24 @@ func (h *InvoiceHandler) handleInvoiceByID(w http.ResponseWriter, r *http.Reques
 
 func (h *InvoiceHandler) createInvoice(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
+
+	// Extract API key from header
+	apiKey := r.Header.Get("X-API-KEY")
+	if apiKey == "" {
+		w.WriteHeader(http.StatusUnauthorized)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "missing X-API-KEY header"})
+		return
+	}
+
 	var in service.InvoiceCreateInput
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid json"})
 		return
 	}
+
+	// Set the API key from header
+	in.APIKey = apiKey
 
 	out, err := h.svc.Create(r.Context(), in)
 	if err != nil {

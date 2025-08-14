@@ -72,7 +72,6 @@ func TestInvoiceService_Create(t *testing.T) {
 
 		input := InvoiceCreateInput{
 			APIKey:         testAPIKey,
-			AccountID:      testAccountID,
 			Amount:         100.50,
 			Description:    "Test invoice",
 			PaymentType:    "credit_card",
@@ -118,7 +117,6 @@ func TestInvoiceService_Create(t *testing.T) {
 
 		input := InvoiceCreateInput{
 			APIKey:         testAPIKey,
-			AccountID:      testAccountID,
 			Amount:         200.00,
 			Description:    "Test invoice 2",
 			PaymentType:    "debit_card",
@@ -149,7 +147,6 @@ func TestInvoiceService_Create(t *testing.T) {
 
 		input := InvoiceCreateInput{
 			APIKey:         testAPIKey,
-			AccountID:      testAccountID,
 			Amount:         15000.00, // Amount > 10000
 			Description:    "High value invoice",
 			PaymentType:    "credit_card",
@@ -179,8 +176,8 @@ func TestInvoiceService_Create(t *testing.T) {
 		svc.SetProcessor(testProcessor)
 
 		input := InvoiceCreateInput{
-			APIKey:         testAPIKey,
-			AccountID:      testAccountID,
+			APIKey: testAPIKey,
+
 			Amount:         10000.00, // Amount = 10000
 			Description:    "Exact value invoice",
 			PaymentType:    "credit_card",
@@ -215,8 +212,8 @@ func TestInvoiceService_Create(t *testing.T) {
 			{
 				name: "invalid description too short",
 				input: InvoiceCreateInput{
-					APIKey:      testAPIKey,
-					AccountID:   testAccountID,
+					APIKey: testAPIKey,
+
 					Amount:      100.50,
 					Description: "Te",
 					PaymentType: "credit_card",
@@ -226,8 +223,8 @@ func TestInvoiceService_Create(t *testing.T) {
 			{
 				name: "invalid payment type empty",
 				input: InvoiceCreateInput{
-					APIKey:      testAPIKey,
-					AccountID:   testAccountID,
+					APIKey: testAPIKey,
+
 					Amount:      100.50,
 					Description: "Test invoice",
 					PaymentType: "",
@@ -237,8 +234,8 @@ func TestInvoiceService_Create(t *testing.T) {
 			{
 				name: "invalid amount negative",
 				input: InvoiceCreateInput{
-					APIKey:      testAPIKey,
-					AccountID:   testAccountID,
+					APIKey: testAPIKey,
+
 					Amount:      -50.00,
 					Description: "Test invoice",
 					PaymentType: "credit_card",
@@ -248,8 +245,8 @@ func TestInvoiceService_Create(t *testing.T) {
 			{
 				name: "invalid amount zero",
 				input: InvoiceCreateInput{
-					APIKey:      testAPIKey,
-					AccountID:   testAccountID,
+					APIKey: testAPIKey,
+
 					Amount:      0.00,
 					Description: "Test invoice",
 					PaymentType: "credit_card",
@@ -259,8 +256,8 @@ func TestInvoiceService_Create(t *testing.T) {
 			{
 				name: "invalid API key",
 				input: InvoiceCreateInput{
-					APIKey:      "invalid-api-key",
-					AccountID:   testAccountID,
+					APIKey: "invalid-api-key",
+
 					Amount:      100.50,
 					Description: "Test invoice",
 					PaymentType: "credit_card",
@@ -330,8 +327,8 @@ func TestInvoiceService_GetByID(t *testing.T) {
 	svc.SetProcessor(testProcessor)
 
 	input := InvoiceCreateInput{
-		APIKey:         testAPIKey,
-		AccountID:      testAccountID,
+		APIKey: testAPIKey,
+
 		Amount:         100.50,
 		Description:    "Test invoice",
 		PaymentType:    "credit_card",
@@ -383,22 +380,22 @@ func TestInvoiceService_GetByAccountID(t *testing.T) {
 	// Create test invoices for different accounts with controlled processors
 	inputs := []InvoiceCreateInput{
 		{
-			APIKey:      testAPIKey1,
-			AccountID:   testAccountID1,
+			APIKey: testAPIKey1,
+
 			Amount:      100.00,
 			Description: "Invoice 1",
 			PaymentType: "credit_card",
 		},
 		{
-			APIKey:      testAPIKey1,
-			AccountID:   testAccountID1,
+			APIKey: testAPIKey1,
+
 			Amount:      200.00,
 			Description: "Invoice 2",
 			PaymentType: "debit_card",
 		},
 		{
-			APIKey:      testAPIKey2,
-			AccountID:   testAccountID2,
+			APIKey: testAPIKey2,
+
 			Amount:      150.00,
 			Description: "Invoice 3",
 			PaymentType: "credit_card",
@@ -481,8 +478,8 @@ func TestInvoiceService_UpdateStatus(t *testing.T) {
 	svc.SetProcessor(testProcessor)
 
 	input := InvoiceCreateInput{
-		APIKey:         testAPIKey,
-		AccountID:      testAccountID,
+		APIKey: testAPIKey,
+
 		Amount:         100.50,
 		Description:    "Test invoice",
 		PaymentType:    "credit_card",

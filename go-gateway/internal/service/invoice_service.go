@@ -11,6 +11,7 @@ import (
 // AccountServicePort defines the interface for AccountService methods needed by InvoiceService
 type AccountServicePort interface {
 	GetByAPIKey(ctx context.Context, apiKey string) (*AccountOutput, error)
+	UpdateBalance(ctx context.Context, apiKey string, amount float64) error
 }
 
 // InvoiceService implements domain.InvoiceRepository by delegating to a Postgres repository
@@ -69,6 +70,14 @@ func (s *InvoiceService) Create(ctx context.Context, in InvoiceCreateInput) (*In
 		return nil, err
 	}
 
+	// Para transações aprovadas, atualizar o saldo
+	if invoice.Status == domain.StatusApproved {
+		err = s.accountService.UpdateBalance(ctx, in.APIKey, invoice.Amount)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	if err := s.repo.Create(ctx, invoice); err != nil {
 		return nil, err
 	}
@@ -99,6 +108,11 @@ func (s *InvoiceService) GetByAccountID(ctx context.Context, accountID string) (
 	}
 
 	return outputs, nil
+}
+
+// GetAccountByAPIKey retrieves an account by API key and returns an output DTO.
+func (s *InvoiceService) GetAccountByAPIKey(ctx context.Context, apiKey string) (*AccountOutput, error) {
+	return s.accountService.GetByAPIKey(ctx, apiKey)
 }
 
 // UpdateStatus updates the status of an invoice.

@@ -7,21 +7,22 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/devfullcycle/imersao22/go-gateway/internal/domain"
 	"github.com/devfullcycle/imersao22/go-gateway/internal/service"
 )
 
-// MockInvoiceService implements InvoiceServicePort for testing
+// MockInvoiceService is a mock implementation of InvoiceServicePort for testing
 type MockInvoiceService struct {
 	invoices map[string]*service.InvoiceOutput
-	accounts map[string]*service.InvoiceOutput
+	accounts map[string]*service.AccountOutput
 }
 
 func NewMockInvoiceService() *MockInvoiceService {
 	return &MockInvoiceService{
 		invoices: make(map[string]*service.InvoiceOutput),
-		accounts: make(map[string]*service.InvoiceOutput),
+		accounts: make(map[string]*service.AccountOutput),
 	}
 }
 
@@ -40,7 +41,7 @@ func (m *MockInvoiceService) Create(ctx context.Context, in service.InvoiceCreat
 	// Simulate creation
 	invoice := &service.InvoiceOutput{
 		ID:             "test-invoice-id",
-		AccountID:      in.AccountID,
+		AccountID:      "test-account-id", // Mock account ID
 		Amount:         in.Amount,
 		Status:         "pending",
 		Description:    in.Description,
@@ -70,6 +71,19 @@ func (m *MockInvoiceService) GetByAccountID(ctx context.Context, accountID strin
 	return invoices, nil
 }
 
+func (m *MockInvoiceService) GetAccountByAPIKey(ctx context.Context, apiKey string) (*service.AccountOutput, error) {
+	// Return a mock account
+	return &service.AccountOutput{
+		ID:        "test-account-id",
+		Name:      "Test Account",
+		Email:     "test@example.com",
+		APIKey:    apiKey,
+		Balance:   1000.0,
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}, nil
+}
+
 func TestInvoiceHandler_CreateInvoice(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -81,7 +95,6 @@ func TestInvoiceHandler_CreateInvoice(t *testing.T) {
 			name: "valid invoice creation",
 			input: service.InvoiceCreateInput{
 				APIKey:         "test-api-key-123",
-				AccountID:      "test-account-id",
 				Amount:         100.50,
 				Description:    "Test invoice",
 				PaymentType:    "credit_card",
@@ -94,7 +107,6 @@ func TestInvoiceHandler_CreateInvoice(t *testing.T) {
 			name: "invalid amount",
 			input: service.InvoiceCreateInput{
 				APIKey:      "test-api-key-123",
-				AccountID:   "test-account-id",
 				Amount:      -50.00,
 				Description: "Test invoice",
 				PaymentType: "credit_card",
@@ -106,7 +118,6 @@ func TestInvoiceHandler_CreateInvoice(t *testing.T) {
 			name: "invalid description",
 			input: service.InvoiceCreateInput{
 				APIKey:      "test-api-key-123",
-				AccountID:   "test-account-id",
 				Amount:      100.00,
 				Description: "Te",
 				PaymentType: "credit_card",
@@ -124,6 +135,7 @@ func TestInvoiceHandler_CreateInvoice(t *testing.T) {
 			inputJSON, _ := json.Marshal(tt.input)
 			req := httptest.NewRequest(http.MethodPost, "/invoices", bytes.NewBuffer(inputJSON))
 			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("X-API-KEY", "test-api-key-123")
 
 			w := httptest.NewRecorder()
 			handler.PostInvoices()(w, req)
