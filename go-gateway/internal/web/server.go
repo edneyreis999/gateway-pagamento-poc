@@ -7,6 +7,7 @@ import (
 
 	"github.com/devfullcycle/imersao22/go-gateway/internal/service"
 	"github.com/devfullcycle/imersao22/go-gateway/internal/web/handlers"
+	"github.com/devfullcycle/imersao22/go-gateway/internal/web/middleware"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -18,6 +19,9 @@ func ConfigureRoutes(db *sql.DB) http.Handler {
 	accountSvc := service.NewAccountService(db)
 	invoiceSvc := service.NewInvoiceService(db)
 
+	// Middleware
+	authMiddleware := middleware.NewAuthMiddleware(accountSvc)
+
 	// Handlers
 	accountH := handlers.NewAccountHandler(accountSvc)
 	invoiceH := handlers.NewInvoiceHandler(invoiceSvc)
@@ -25,12 +29,16 @@ func ConfigureRoutes(db *sql.DB) http.Handler {
 	// Routes
 	r.Route("/accounts", func(r chi.Router) {
 		r.Post("/", accountH.PostAccounts()) // POST /accounts
-		r.Get("/", accountH.GetAccounts())   // GET /accounts (by X-API-KEY)
+		r.Get("/", accountH.GetAccounts())   // GET /accounts
 	})
 
+	// Rotas de invoice COM autenticação
 	r.Route("/invoices", func(r chi.Router) {
+		// Aplicar auth middleware apenas nas rotas de invoice
+		r.Use(authMiddleware.Authenticate)
+
 		r.Post("/", invoiceH.PostInvoices())      // POST /invoices
-		r.Get("/", invoiceH.GetInvoices())        // GET /invoices (by account_id)
+		r.Get("/", invoiceH.GetInvoices())        // GET /invoices
 		r.Get("/{id}", invoiceH.GetInvoiceByID()) // GET /invoices/{id}
 	})
 
