@@ -37,7 +37,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       apiClient.setApiKey(newApiKey)
 
       // Try to fetch account to validate API key
-      await apiClient.getAccount()
+      await apiClient.getAccount(newApiKey)
 
       localStorage.setItem("gateway_api_key", newApiKey)
       setApiKey(newApiKey)
