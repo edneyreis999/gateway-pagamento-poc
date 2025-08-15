@@ -19,8 +19,19 @@ interface InvoicesPageProps {
 }
 
 export function InvoicesPage({ initialData }: InvoicesPageProps) {
+  console.log("---- InvoicesPage: Component render ----", {
+    initialDataLength: initialData.invoices?.length,
+    hasError: !!initialData.error
+  });
+
   const { invoices, isLoading, error, filters, updateFilters } = useInvoices({
     initialData,
+  });
+
+  console.log("---- InvoicesPage: useInvoices hook result ----", {
+    invoicesLength: invoices?.length,
+    isLoading,
+    error
   });
 
   return (

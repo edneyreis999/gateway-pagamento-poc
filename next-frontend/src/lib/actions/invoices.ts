@@ -9,6 +9,9 @@ export async function getInvoicesAction(filters?: InvoiceFilters & { page?: numb
   const cookiesStore = await cookies()
   const apiKey = cookiesStore.get("apiKey")?.value
 
+  console.log('----- apiKey -----')
+  console.log(apiKey)
+
   if (!apiKey) {
     redirect("/auth")
   }
