@@ -1,11 +1,12 @@
 import { InvoiceDetailsPage } from "@/components/invoice-details-page"
 
 interface InvoiceDetailsRouteProps {
-  params: {
+  params: Promise<{
     id: string
-  }
+  }>
 }
 
-export default function InvoiceDetailsRoute({ params }: InvoiceDetailsRouteProps) {
-  return <InvoiceDetailsPage invoiceId={params.id} />
+export default async function InvoiceDetailsRoute({ params }: InvoiceDetailsRouteProps) {
+  const { id } = await params
+  return <InvoiceDetailsPage invoiceId={id} />
 }

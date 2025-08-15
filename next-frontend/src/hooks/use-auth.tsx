@@ -20,16 +20,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true)
   const router = useRouter()
 
+  console.log('---- storedApiKey ----')
+
   useEffect(() => {
     // Check for stored API key on mount
     const storedApiKey = localStorage.getItem("gateway_api_key")
+    console.log('storedApiKey', storedApiKey)
+    console.log('isAuthenticated', isAuthenticated)
     if (storedApiKey) {
       setApiKey(storedApiKey)
       setIsAuthenticated(true)
       apiClient.setApiKey(storedApiKey)
     }
     setIsLoading(false)
-  }, [])
+  }, [isAuthenticated])
 
   const login = async (newApiKey: string): Promise<boolean> => {
     try {

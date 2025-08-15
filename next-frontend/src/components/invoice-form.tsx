@@ -13,7 +13,7 @@ import { InvoiceSummary } from "@/components/invoice-summary"
 import { LoadingSpinner } from "@/components/loading-spinner"
 import { apiClient } from "@/lib/api"
 import { Input } from "@/components/ui/input"
-import type { CreateInvoiceData } from "@/types"
+import type { CreateInvoiceData } from "../../types"
 
 interface FormData {
   amount: string
@@ -100,16 +100,12 @@ export function InvoiceForm() {
       const invoiceData: CreateInvoiceData = {
         amount: Number.parseInt(formData.amount),
         description: formData.description,
-        paymentMethod: {
-          type: formData.paymentType,
-          ...(formData.paymentType !== "pix" && {
-            cardNumber: formData.cardNumber.replace(/\s/g, ""),
-            cvv: formData.cvv,
-            expiryMonth: formData.expiryMonth,
-            expiryYear: formData.expiryYear,
-            cardholderName: formData.cardholderName,
-          }),
-        },
+        payment_type: formData.paymentType,
+        card_number: formData.cardNumber.replace(/\s/g, ""),
+        cvv: formData.cvv,
+        expiry_month: Number(formData.expiryMonth),
+        expiry_year: Number(formData.expiryYear),
+        cardholder_name: formData.cardholderName,
       }
 
       const invoice = await apiClient.createInvoice(invoiceData)

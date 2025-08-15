@@ -2,7 +2,7 @@
 
 import { ChevronLeft, ChevronRight } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import type { PaginationInfo } from "@/types"
+import type { PaginationInfo } from "../../types"
 
 interface PaginationProps {
   pagination: PaginationInfo

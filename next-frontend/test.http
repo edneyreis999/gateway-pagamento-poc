@@ -54,4 +54,8 @@ X-API-Key: {{apiKey}}
     "expiry_month": 12,
     "expiry_year": 2025,
     "cardholder_name": "John Doe"
-} 
+}
+
+### Get invoices
+GET {{baseUrl}}/invoices
+X-API-Key: {{apiKey}}

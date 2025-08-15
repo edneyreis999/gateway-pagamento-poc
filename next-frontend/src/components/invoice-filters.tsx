@@ -3,7 +3,7 @@
 import { CalendarIcon, Search } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import type { InvoiceFilters } from "@/types"
+import type { InvoiceFilters } from "../../types"
 
 interface InvoiceFiltersProps {
   filters: InvoiceFilters
@@ -17,7 +17,7 @@ export function InvoiceFiltersComponent({ filters, onFiltersChange }: InvoiceFil
         {/* Status Filter */}
         <div className="space-y-2">
           <label className="text-sm font-medium text-slate-200 font-dm-sans">Status</label>
-          <Select value={filters.status || "all"} onValueChange={(value) => onFiltersChange({ status: value as any })}>
+          <Select value={filters.status || "all"} onValueChange={(value) => onFiltersChange({ status: value as "all" | "pending" | "approved" | "rejected" })}>
             <SelectTrigger className="bg-slate-700 border-slate-600 text-white">
               <SelectValue placeholder="Todos" />
             </SelectTrigger>

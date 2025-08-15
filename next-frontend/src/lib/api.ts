@@ -5,44 +5,9 @@ type Account = {
   name: string
 }
 
-type CreateInvoiceData = {
-  amount: number
-  description: string
-  paymentMethod: {
-    type: string
-    lastFourDigits: string
-    cardholderName: string
-  }
-}
+import type { CreateInvoiceData, Invoice, InvoiceFilters } from "../../types"
 
-type Invoice = {
-  id: string
-  amount: number
-  description: string
-  status: string
-  createdAt: string
-  updatedAt: string
-  paymentMethod: {
-    type: string
-    lastFourDigits: string
-    cardholderName: string
-  }
-  accountId: string
-  clientIp: string
-  device: string
-}
 
-interface InvoiceFilters {
-  status?: string
-  startDate?: string
-  endDate?: string
-  search?: string
-}
-
-type PaginationInfo = {
-  currentPage: number
-  totalPages: number
-}
 
 class ApiClient {
   private apiKey: string | null = null
@@ -60,13 +25,22 @@ class ApiClient {
     }
 
     if (this.apiKey) {
-      headers["X-API-Key"] = this.apiKey
+      (headers as Record<string, string>)["X-API-Key"] = this.apiKey
     }
+
+    console.log('------ request -----')
+    console.log(url, {
+      ...options,
+      headers,
+    })
 
     const response = await fetch(url, {
       ...options,
       headers,
     })
+
+    console.log('------ response -----')
+    console.log(response)
 
     if (!response.ok) {
       throw new Error(`API Error: ${response.status} ${response.statusText}`)
@@ -83,20 +57,18 @@ class ApiClient {
   }
 
   async getAccount(apiKey: string): Promise<Account> {
-    return this.request<Account>("/accounts", { headers: { 'X-API-Key': apiKey } })
+    const headers: Record<string, string> = { "X-API-Key": apiKey }
+    return this.request<Account>("/accounts", { headers })
   }
 
   async createInvoice(data: CreateInvoiceData): Promise<Invoice> {
-    return this.request<Invoice>("/invoice", {
+    return this.request<Invoice>("/invoices", {
       method: "POST",
       body: JSON.stringify(data),
     })
   }
 
-  async getInvoices(filters?: InvoiceFilters & { page?: number }): Promise<{
-    invoices: Invoice[]
-    pagination: PaginationInfo
-  }> {
+  async getInvoices(filters?: InvoiceFilters & { page?: number }): Promise<Invoice[]> {
     const params = new URLSearchParams()
 
     if (filters?.status && filters.status !== "all") {
@@ -116,7 +88,7 @@ class ApiClient {
     }
 
     const queryString = params.toString()
-    const endpoint = `/invoice${queryString ? `?${queryString}` : ""}`
+    const endpoint = `/invoices${queryString ? `?${queryString}` : ""}`
 
     return this.request(endpoint)
   }
@@ -127,20 +99,15 @@ class ApiClient {
     return new Promise((resolve) => {
       setTimeout(() => {
         resolve({
-          id: `#INV-${id.padStart(3, "0")}`,
-          amount: 150000, // R$ 1.500,00 in cents
-          description: "Compra Online #123",
-          status: "approved",
-          createdAt: "2025-03-30T14:30:00Z",
-          updatedAt: "2025-03-30T14:35:00Z",
-          paymentMethod: {
-            type: "credit_card",
-            lastFourDigits: "1234",
-            cardholderName: "João da Silva",
-          },
-          accountId: "ACC-12345",
-          clientIp: "192.168.1.1",
-          device: "Desktop - Chrome",
+          id: 'ab387ffc-b52e-45fb-9e66-dd76652180dc',
+          account_id: '6d75cfdf-f1aa-453d-aca3-7083b4d91cbd',
+          amount: 100.5,
+          status: 'pending',
+          description: 'Test invoice for payment gateway',
+          payment_type: 'credit_card',
+          card_last_digits: '1234',
+          created_at: '2025-08-13T02:38:48.112219Z',
+          updated_at: '2025-08-13T02:38:48.112219Z'
         } as Invoice)
       }, 1000)
     })

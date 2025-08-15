@@ -7,7 +7,7 @@ import { StatusBadge } from "@/components/status-badge"
 import { LoadingSpinner } from "@/components/loading-spinner"
 import { formatCurrency, formatDate } from "@/lib/utils"
 import Link from "next/link"
-import type { Invoice } from "@/types"
+import { Invoice } from "../../types"
 
 interface InvoiceTableProps {
   invoices: Invoice[]
@@ -15,6 +15,8 @@ interface InvoiceTableProps {
 }
 
 export function InvoiceTable({ invoices, isLoading }: InvoiceTableProps) {
+  console.log('---- InvoiceTable: invoices ----')
+  console.log(invoices)
   if (isLoading) {
     return (
       <div className="bg-slate-800 rounded-lg p-8 flex items-center justify-center">
@@ -49,7 +51,7 @@ export function InvoiceTable({ invoices, isLoading }: InvoiceTableProps) {
             <TableRow key={invoice.id} className="border-slate-700 hover:bg-slate-700/30">
               <TableCell className="font-mono text-slate-300">{invoice.id}</TableCell>
               <TableCell className="text-slate-300 font-dm-sans">
-                {formatDate(invoice.createdAt).split(" ")[0]}
+                {formatDate(invoice.created_at).split(" ")[0]}
               </TableCell>
               <TableCell className="text-white font-dm-sans">{invoice.description}</TableCell>
               <TableCell className="text-white font-dm-sans font-semibold">{formatCurrency(invoice.amount)}</TableCell>

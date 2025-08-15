@@ -1,18 +1,27 @@
-"use client"
+"use client";
 
-import { Plus } from "lucide-react"
-import { Button } from "@/components/ui/button"
-import { Navbar } from "@/components/navbar"
-import { PageHeader } from "@/components/page-header"
-import { InvoiceFiltersComponent } from "@/components/invoice-filters"
-import { InvoiceTable } from "@/components/invoice-table"
-import { Pagination } from "@/components/pagination"
-import { ProtectedRoute } from "@/components/protected-route"
-import { useInvoices } from "@/hooks/use-invoices"
-import Link from "next/link"
+import { Plus } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Navbar } from "@/components/navbar";
+import { PageHeader } from "@/components/page-header";
+import { InvoiceFiltersComponent } from "@/components/invoice-filters";
+import { InvoiceTable } from "@/components/invoice-table";
+import { ProtectedRoute } from "@/components/protected-route";
+import { useInvoices } from "@/hooks/use-invoices";
+import Link from "next/link";
+import { Invoice } from "../../types";
 
-export function InvoicesPage() {
-  const { invoices, pagination, isLoading, error, filters, updateFilters, goToPage } = useInvoices()
+interface InvoicesPageProps {
+  initialData: {
+    invoices: Invoice[];
+    error: string | null;
+  };
+}
+
+export function InvoicesPage({ initialData }: InvoicesPageProps) {
+  const { invoices, isLoading, error, filters, updateFilters } = useInvoices({
+    initialData,
+  });
 
   return (
     <ProtectedRoute>
@@ -24,7 +33,10 @@ export function InvoicesPage() {
               title="Faturas"
               subtitle="Gerencie suas faturas e acompanhe os pagamentos"
               action={
-                <Button asChild className="bg-blue-600 hover:bg-blue-700 text-white">
+                <Button
+                  asChild
+                  className="bg-blue-600 hover:bg-blue-700 text-white"
+                >
                   <Link href="/invoices/create">
                     <Plus className="w-4 h-4 mr-2" />
                     Nova Fatura
@@ -34,17 +46,20 @@ export function InvoicesPage() {
             />
 
             {error && (
-              <div className="bg-red-900/20 border border-red-800 text-red-400 px-4 py-3 rounded-lg mb-6">{error}</div>
+              <div className="bg-red-900/20 border border-red-800 text-red-400 px-4 py-3 rounded-lg mb-6">
+                {error}
+              </div>
             )}
 
-            <InvoiceFiltersComponent filters={filters} onFiltersChange={updateFilters} />
+            <InvoiceFiltersComponent
+              filters={filters}
+              onFiltersChange={updateFilters}
+            />
 
             <InvoiceTable invoices={invoices} isLoading={isLoading} />
-
-            <Pagination pagination={pagination} onPageChange={goToPage} />
           </div>
         </main>
       </div>
     </ProtectedRoute>
-  )
+  );
 }
