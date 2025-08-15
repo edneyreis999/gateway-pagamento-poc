@@ -82,8 +82,8 @@ class ApiClient {
     })
   }
 
-  async getAccount(): Promise<Account> {
-    return this.request<Account>("/accounts")
+  async getAccount(apiKey: string): Promise<Account> {
+    return this.request<Account>("/accounts", { headers: { 'X-API-Key': apiKey } })
   }
 
   async createInvoice(data: CreateInvoiceData): Promise<Invoice> {
