@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"database/sql"
+	"fmt"
 
 	"github.com/devfullcycle/imersao22/go-gateway/internal/domain"
 	pg "github.com/devfullcycle/imersao22/go-gateway/internal/repository/postgres"
@@ -39,6 +40,8 @@ func (s *AccountService) GetByID(ctx context.Context, id string) (*AccountOutput
 }
 
 func (s *AccountService) GetByAPIKey(ctx context.Context, apiKey string) (*AccountOutput, error) {
+	fmt.Println("API Key:", apiKey)
+
 	acc, err := s.repo.GetByAPIKey(ctx, apiKey)
 	if err != nil {
 		return nil, err
