@@ -1,37 +1,30 @@
 import type React from "react"
-import type { Metadata } from "next"
-import { Space_Grotesk, DM_Sans } from "next/font/google"
+import { Inter } from "next/font/google"
 import "./globals.css"
-import { AuthProvider } from "@/hooks/use-auth"
+import { Header } from "@/components/header"
 
-const spaceGrotesk = Space_Grotesk({
-  subsets: ["latin"],
-  display: "swap",
-  variable: "--font-space-grotesk",
-})
+const inter = Inter({ subsets: ["latin"] })
 
-const dmSans = DM_Sans({
-  subsets: ["latin"],
-  display: "swap",
-  variable: "--font-dm-sans",
-})
-
-export const metadata: Metadata = {
-  title: "Full Cycle Gateway - Sistema de Pagamentos",
-  description: "Gateway de pagamentos educacional para processamento de transações financeiras",
-  generator: "v0.app",
+export const metadata = {
+  title: "Full Cycle Gateway",
+  description: "Gateway de pagamentos completo",
 }
 
 export default function RootLayout({
   children,
-}: Readonly<{
+}: {
   children: React.ReactNode
-}>) {
+}) {
   return (
-    <html lang="pt-BR" className={`${spaceGrotesk.variable} ${dmSans.variable} dark`}>
-      <body className="min-h-screen bg-slate-900 text-slate-100 antialiased">
-        <AuthProvider>{children}</AuthProvider>
+    <html lang="pt-BR">
+      <body className={`${inter.className} bg-[#1a2332] min-h-screen`}>
+        <Header />
+        <main className="container mx-auto py-4">{children}</main>
+        <footer className="py-4 text-center text-sm text-gray-400">
+          © 2025 Full Cycle Gateway. Todos os direitos reservados.
+        </footer>
       </body>
     </html>
   )
 }
+

@@ -1,16 +1,10 @@
-import { InvoicesPage } from "@/components/invoices-page"
-import { getInvoicesAction } from "@/lib/actions/invoices"
-import { logger } from "@/lib/logger"
+import { InvoiceList } from "@/app/invoices/invoice-list"
 
-export default async function InvoicesRoute() {
-  logger.route('Invoices route accessed');
-  
-  const initialData = await getInvoicesAction()
+export default function InvoiceListPage() {
+  // Em uma aplicação real, verificaria se o usuário está autenticado
+  // const isAuthenticated = checkAuth()
+  // if (!isAuthenticated) redirect('/auth')
 
-  logger.info('Invoices page data loaded', {
-    invoiceCount: initialData.invoices?.length,
-    hasError: !!initialData.error
-  });
-  
-  return <InvoicesPage initialData={initialData} />
+  return <InvoiceList />
 }
+
