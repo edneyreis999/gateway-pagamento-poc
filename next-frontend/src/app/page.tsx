@@ -4,28 +4,26 @@ import { useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { useAuth } from "@/hooks/use-auth"
 import { LoadingSpinner } from "@/components/loading-spinner"
+import { logger } from "@/lib/logger"
 
 export default function HomePage() {
   const { isAuthenticated, isLoading } = useAuth()
   const router = useRouter()
 
-  console.log("---- HomePage: Component render ----", {
-    isAuthenticated,
-    isLoading
-  });
+  logger.route('HomePage render', { isAuthenticated, isLoading });
 
   useEffect(() => {
-    console.log("---- HomePage: useEffect triggered ----", {
+    logger.route('HomePage effect triggered', {
       isAuthenticated,
       isLoading
     });
     
     if (!isLoading) {
       if (isAuthenticated) {
-        console.log("---- HomePage: router.push('/invoices') ----");
+        logger.route('User authenticated, redirecting to invoices');
         router.push("/invoices")
       } else {
-        console.log("---- HomePage: router.push('/auth') ----");
+        logger.route('User not authenticated, redirecting to auth');
         router.push("/auth")
       }
     }

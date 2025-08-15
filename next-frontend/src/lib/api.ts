@@ -6,14 +6,14 @@ type Account = {
 }
 
 import type { CreateInvoiceData, Invoice, InvoiceFilters } from "../../types"
-
-
+import { logger } from "./logger"
 
 class ApiClient {
   private apiKey: string | null = null
 
   setApiKey(apiKey: string) {
     this.apiKey = apiKey
+    logger.api('API key set', { hasApiKey: !!apiKey });
   }
 
   private async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
@@ -28,28 +28,42 @@ class ApiClient {
       (headers as Record<string, string>)["X-API-Key"] = this.apiKey
     }
 
-    console.log('------ request -----')
-    console.log(url, {
-      ...options,
-      headers,
-    })
+    logger.api('API request initiated', {
+      url,
+      method: options.method || 'GET',
+      hasApiKey: !!this.apiKey
+    });
 
     const response = await fetch(url, {
       ...options,
       headers,
     })
 
-    console.log('------ response -----')
-    console.log(response)
+    logger.api('API response received', {
+      url: response.url,
+      status: response.status,
+      ok: response.ok
+    });
 
     if (!response.ok) {
+      logger.error('API request failed', {
+        status: response.status,
+        statusText: response.statusText,
+        url
+      });
       throw new Error(`API Error: ${response.status} ${response.statusText}`)
     }
 
-    return response.json()
+    const data = await response.json();
+    logger.debug('API response data', { 
+      dataLength: Array.isArray(data) ? data.length : 'single object' 
+    });
+
+    return data;
   }
 
   async createAccount(data: { name: string }): Promise<Account> {
+    logger.api('Creating account', { name: data.name });
     return this.request<Account>("/accounts", {
       method: "POST",
       body: JSON.stringify(data),
@@ -57,11 +71,16 @@ class ApiClient {
   }
 
   async getAccount(apiKey: string): Promise<Account> {
+    logger.api('Validating API key with account endpoint');
     const headers: Record<string, string> = { "X-API-Key": apiKey }
     return this.request<Account>("/accounts", { headers })
   }
 
   async createInvoice(data: CreateInvoiceData): Promise<Invoice> {
+    logger.api('Creating invoice', { 
+      amount: data.amount,
+      paymentType: data.payment_type 
+    });
     return this.request<Invoice>("/invoices", {
       method: "POST",
       body: JSON.stringify(data),
@@ -90,10 +109,16 @@ class ApiClient {
     const queryString = params.toString()
     const endpoint = `/invoices${queryString ? `?${queryString}` : ""}`
 
+    logger.api('Fetching invoices', { 
+      hasFilters: !!filters,
+      queryString 
+    });
+
     return this.request(endpoint)
   }
 
   async getInvoice(id: string): Promise<Invoice> {
+    logger.api('Getting invoice by ID', { id });
     // For demo purposes, return mock data
     // In real implementation, this would make an actual API call
     return new Promise((resolve) => {

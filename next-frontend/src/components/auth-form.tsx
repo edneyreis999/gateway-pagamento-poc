@@ -6,18 +6,29 @@ import { Input } from "@/components/ui/input";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { apiClient } from "@/lib/api";
+import { logger } from "@/lib/logger";
 
 export async function loginAction(formData: FormData) {
   "use server";
 
   const apiKey = formData.get("apiKey") as string;
+  
+  logger.auth('Login action initiated', { hasApiKey: !!apiKey });
 
-  await apiClient.getAccount(apiKey.trim());
+  try {
+    await apiClient.getAccount(apiKey.trim());
+    logger.auth('API key validation successful');
 
-  const cookiesStore = await cookies();
-  cookiesStore.set("apiKey", apiKey.trim());
+    const cookiesStore = await cookies();
+    cookiesStore.set("apiKey", apiKey.trim());
+    logger.auth('API key saved to cookies');
 
-  redirect("/invoices");
+    logger.route('Login successful, redirecting to invoices');
+    redirect("/invoices");
+  } catch (error) {
+    logger.error('Login action failed', error);
+    throw error;
+  }
 }
 
 export function AuthForm() {

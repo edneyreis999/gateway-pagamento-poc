@@ -10,6 +10,7 @@ import { ProtectedRoute } from "@/components/protected-route";
 import { useInvoices } from "@/hooks/use-invoices";
 import Link from "next/link";
 import { Invoice } from "../../types";
+import { logger } from "@/lib/logger";
 
 interface InvoicesPageProps {
   initialData: {
@@ -19,7 +20,7 @@ interface InvoicesPageProps {
 }
 
 export function InvoicesPage({ initialData }: InvoicesPageProps) {
-  console.log("---- InvoicesPage: Component render ----", {
+  logger.info('InvoicesPage render', {
     initialDataLength: initialData.invoices?.length,
     hasError: !!initialData.error
   });
@@ -28,10 +29,10 @@ export function InvoicesPage({ initialData }: InvoicesPageProps) {
     initialData,
   });
 
-  console.log("---- InvoicesPage: useInvoices hook result ----", {
+  logger.state('InvoicesPage hook result', {
     invoicesLength: invoices?.length,
     isLoading,
-    error
+    hasError: !!error
   });
 
   return (

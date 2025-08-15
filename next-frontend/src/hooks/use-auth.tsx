@@ -9,6 +9,7 @@ import {
 } from "react";
 import { useRouter } from "next/navigation";
 import { apiClient } from "@/lib/api";
+import { logger } from "@/lib/logger";
 
 interface AuthContextType {
   isAuthenticated: boolean;
@@ -26,17 +27,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
   const router = useRouter();
 
-  console.log("---- AuthProvider: Component mounted ----");
-  console.log("---- AuthProvider: Current state ----", {
-    isAuthenticated,
-    apiKey,
-    isLoading
-  });
+  logger.auth('Provider mounted', { isAuthenticated, isLoading });
 
   useEffect(() => {
-    console.log("---- AuthProvider: useEffect triggered ----");
-    console.log("---- AuthProvider: Client-side useEffect ----");
-    console.log("---- AuthProvider: Window available? ----", typeof window !== 'undefined');
+    logger.auth('Initializing authentication state');
     
     // Função para ler cookies no client-side
     const getCookie = (name: string) => {
@@ -47,25 +41,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
 
     const storedApiKey = getCookie("apiKey");
-    console.log("---- AuthProvider: Cookie value ----", storedApiKey);
-    console.log("---- AuthProvider: All cookies ----", document.cookie);
+    logger.debug('Cookie retrieved', { storedApiKey: storedApiKey ? '***' : null });
 
     if (storedApiKey) {
-      console.log("---- AuthProvider: Setting authenticated state ----");
+      logger.auth('API key found in cookie, setting authenticated state');
       setApiKey(storedApiKey);
       setIsAuthenticated(true);
       apiClient.setApiKey(storedApiKey);
     } else {
-      console.log("---- AuthProvider: No API key found in cookie ----");
+      logger.warn('No API key found in cookie');
     }
     
-    console.log("---- AuthProvider: Setting isLoading to false ----");
+    logger.auth('Setting loading state to false');
     setIsLoading(false);
   }, []);
 
   const login = async (newApiKey: string): Promise<boolean> => {
     try {
-      console.log("---- AuthProvider: Login function called ----", { newApiKey });
+      logger.auth('Login attempt initiated', { apiKey: '***' });
       setIsLoading(true);
       apiClient.setApiKey(newApiKey);
 
@@ -75,11 +68,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       localStorage.setItem("apiKey", newApiKey);
       setApiKey(newApiKey);
       setIsAuthenticated(true);
-      console.log("---- AuthProvider: Login successful, redirecting to /invoices ----");
+      logger.auth('Login successful, redirecting to invoices');
       router.push("/invoices");
       return true;
     } catch (error) {
-      console.error("Authentication failed:", error);
+      logger.error('Authentication failed', error);
       return false;
     } finally {
       setIsLoading(false);
@@ -87,7 +80,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const logout = () => {
-    console.log("---- AuthProvider: Logout function called ----");
+    logger.auth('Logout initiated');
     localStorage.removeItem("apiKey");
     setApiKey(null);
     setIsAuthenticated(false);
@@ -95,9 +88,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     router.push("/auth");
   };
 
-  console.log("---- AuthProvider: Before return ----", {
+  logger.state('AuthProvider state update', {
     isAuthenticated,
-    apiKey,
+    hasApiKey: !!apiKey,
     isLoading
   });
 
